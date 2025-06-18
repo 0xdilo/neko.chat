@@ -67,12 +67,14 @@ fn generate_chat_title(content: &str) -> String {
 #[derive(Deserialize)]
 pub struct SendMessagePayload {
     pub content: String,
+    pub web_search: Option<bool>,
 }
 
 #[derive(Deserialize)]
 pub struct ParallelLLMPayload {
     pub content: String,
     pub models: Vec<ParallelModelConfig>,
+    pub web_search: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -307,11 +309,22 @@ pub async fn stream_message(
     // --- 3. create the stream ---
     let response_stream = stream! {
         let full_response = Arc::new(tokio::sync::Mutex::new(String::new()));
-        let mut llm_stream = match llm_client.chat_stream(&chat.model, conversation).await {
-            Ok(s) => s,
-            Err(e) => {
-                yield Err(e);
-                return;
+        let use_web_search = payload.web_search.unwrap_or(false) && llm_client.supports_web_search();
+        let mut llm_stream = if use_web_search {
+            match llm_client.chat_stream_with_web_search(&chat.model, conversation).await {
+                Ok(s) => s,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            }
+        } else {
+            match llm_client.chat_stream(&chat.model, conversation).await {
+                Ok(s) => s,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
             }
         };
 

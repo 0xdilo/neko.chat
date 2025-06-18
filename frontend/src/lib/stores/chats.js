@@ -3,7 +3,7 @@ import { browser } from "$app/environment";
 import { chatAPI } from "$lib/api/chats.js";
 import { showError, showSuccess } from "./app.js";
 import { rightSidebarCollapsed } from "./ui.js";
-import { getFirstEnabledModel } from "./models.js";
+import { getFirstEnabledModel, lastUsedModel } from "./models.js";
 
 function generateChatTitle(content) {
   if (!content || typeof content !== "string") {
@@ -71,7 +71,7 @@ export async function loadChats() {
 }
 
 // Build tree structure from flat chat list
-function buildChatTree(chatList) {
+export function buildChatTree(chatList) {
   const tree = {};
   const chatMap = {};
 
@@ -99,12 +99,19 @@ export async function createChat(chatData = {}) {
 
   try {
     const defaultModel = getFirstEnabledModel();
+    const lastModel = get(lastUsedModel);
+    
+    // Use last used model if available and no specific model provided
+    const modelToUse = chatData.provider && chatData.model 
+      ? { provider: chatData.provider, model: chatData.model }
+      : lastModel || defaultModel;
+    
     const newChat = await chatAPI.createChat({
       title: chatData.title || "New Chat",
       system_prompt:
         chatData.system_prompt || "You are a helpful AI assistant.",
-      provider: chatData.provider || defaultModel.provider,
-      model: chatData.model || defaultModel.model,
+      provider: modelToUse.provider,
+      model: modelToUse.model,
       is_branch: chatData.is_branch || false,
     });
 
@@ -351,6 +358,7 @@ export async function sendMessage(content, options = {}) {
   try {
     // Stream message response
     await chatAPI.streamMessage(currentChatId, content, {
+      webSearch: options.webSearch,
       onChunk: (accumulatedContent) => {
         // Update global streaming state
         streamingMessages.update((messages) => ({
@@ -576,6 +584,7 @@ async function startBranchStreaming(chatId, content) {
     }
 
     await chatAPI.streamMessage(chatId, content, {
+      webSearch: false, // Parallel messages use individual model capabilities
       onChunk: (accumulatedContent) => {
         // Update the global streaming state
         streamingMessages.update((messages) => ({

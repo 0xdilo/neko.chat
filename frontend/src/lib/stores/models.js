@@ -28,6 +28,37 @@ export const favoriteModels = derived(userModels, ($userModels) => {
 export const modelsLoading = writable(false);
 export const modelsError = writable(null);
 
+// Last used model for new chat creation (persisted)
+function createLastUsedModel() {
+  const { subscribe, set, update } = writable(null);
+  
+  return {
+    subscribe,
+    set: (value) => {
+      if (browser) {
+        localStorage.setItem('neko-last-used-model', JSON.stringify(value));
+      }
+      set(value);
+    },
+    update,
+    // Initialize from localStorage
+    init: () => {
+      if (browser) {
+        const stored = localStorage.getItem('neko-last-used-model');
+        if (stored) {
+          try {
+            set(JSON.parse(stored));
+          } catch (e) {
+            console.warn('Failed to parse stored last used model:', e);
+          }
+        }
+      }
+    }
+  };
+}
+
+export const lastUsedModel = createLastUsedModel();
+
 /**
  * Load user's model preferences
  */
@@ -148,6 +179,29 @@ export function getProviderDisplayName(provider) {
     xai: 'xAI'
   };
   return names[provider] || provider;
+}
+
+/**
+ * Check if a provider supports web search
+ */
+export function providerSupportsWebSearch(provider) {
+  const webSearchProviders = ['anthropic', 'gemini', 'openrouter'];
+  return webSearchProviders.includes(provider);
+}
+
+/**
+ * Check if any of the current selected models support web search
+ */
+export function anySelectedModelSupportsWebSearch(selectedModels, allModels) {
+  if (!selectedModels || selectedModels.length === 0) return false;
+  
+  for (const modelId of selectedModels) {
+    const model = allModels.find(m => m.model_id === modelId);
+    if (model && providerSupportsWebSearch(model.provider)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

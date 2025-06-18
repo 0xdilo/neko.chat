@@ -15,6 +15,16 @@ pub trait LLMClient: Send + Sync {
         model: &str,
         messages: Vec<Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError>;
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError>;
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError>;
+
+    fn supports_web_search(&self) -> bool;
 }
 
 pub fn get_llm_client(provider: &str, api_key: &str) -> Result<Box<dyn LLMClient>, AppError> {
@@ -458,6 +468,22 @@ impl LLMClient for OpenAIClient {
 
         Ok(Box::pin(stream))
     }
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
+        self.chat(model, messages).await
+    }
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError> {
+        self.chat_stream(model, messages).await
+    }
+
+    fn supports_web_search(&self) -> bool {
+        false
+    }
 }
 
 pub struct AnthropicClient {
@@ -627,6 +653,155 @@ impl LLMClient for AnthropicClient {
 
         Ok(Box::pin(stream))
     }
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
+        let (system_prompt, user_messages) = self.separate_system_messages(messages);
+
+        let mut request_body = serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "messages": user_messages,
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 5
+                }
+            ]
+        });
+
+        if let Some(system) = system_prompt {
+            request_body["system"] = serde_json::Value::String(system);
+        }
+
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            tracing::error!("anthropic web search api error: {:?}", response.text().await);
+            return Err(AppError::InternalServerError);
+        }
+
+        let response_json: Value = response
+            .json()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        let content = response_json
+            .get("content")
+            .and_then(|c| c.as_array())
+            .and_then(|arr| arr.first())
+            .and_then(|item| item.get("text"))
+            .and_then(|text| text.as_str())
+            .unwrap_or_default();
+
+        Ok(content.to_string())
+    }
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError> {
+        let mut max_tokens = 4096;
+        if model.contains("reasoning") {
+            tracing::info!("Using Anthropic reasoning model: {}", model);
+            max_tokens = 8192;
+        }
+
+        let (system_prompt, user_messages) = self.separate_system_messages(messages);
+
+        let mut request_body = serde_json::json!({
+            "model": model,
+            "max_tokens": max_tokens,
+            "messages": user_messages,
+            "stream": true,
+            "tools": [
+                {
+                    "type": "web_search_20250305",
+                    "name": "web_search",
+                    "max_uses": 5
+                }
+            ]
+        });
+
+        if let Some(system) = system_prompt {
+            request_body["system"] = serde_json::Value::String(system);
+        }
+
+        let response = self
+            .client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(&request_body)
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "Anthropic web search streaming API error: status {}, body: {}",
+                status,
+                error_text
+            );
+            return Err(AppError::InternalServerError);
+        }
+
+        let byte_stream = response.bytes_stream();
+
+        let stream = async_stream::stream! {
+            let mut inner_stream = byte_stream;
+            while let Some(chunk_result) = inner_stream.next().await {
+                let chunk = match chunk_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("Anthropic web search stream chunk error: {}", e);
+                        yield Err(AppError::InternalServerError);
+                        break;
+                    }
+                };
+
+                for line in chunk.split(|&b| b == b'\n') {
+                    if line.starts_with(b"data: ") {
+                        let data = &line[6..];
+                        let data_str = String::from_utf8_lossy(data);
+
+                        if data == b"[DONE]" {
+                            break;
+                        }
+
+                        if let Ok(parsed) = serde_json::from_slice::<Value>(data) {
+                            if let Some(event_type) = parsed.get("type").and_then(|t| t.as_str()) {
+                                if event_type == "content_block_delta" {
+                                    if let Some(delta) = parsed.get("delta").and_then(|d| d.get("text")).and_then(|t| t.as_str()) {
+                                        yield Ok(delta.to_string());
+                                    }
+                                }
+                            }
+                        } else {
+                            tracing::warn!("Failed to parse Anthropic web search JSON: {}", data_str);
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    fn supports_web_search(&self) -> bool {
+        true
+    }
 }
 
 pub struct OpenRouterClient {
@@ -727,6 +902,108 @@ impl LLMClient for OpenRouterClient {
         };
 
         Ok(Box::pin(stream))
+    }
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
+        let model_with_web = if model.contains(":online") {
+            model.to_string()
+        } else {
+            format!("{}:online", model)
+        };
+
+        let response = self
+            .client
+            .post("https://openrouter.ai/api/v1/chat/completions")
+            .bearer_auth(&self.api_key)
+            .json(&serde_json::json!({
+                "model": model_with_web,
+                "messages": messages,
+            }))
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            tracing::error!("openrouter web search api error: {:?}", response.text().await);
+            return Err(AppError::InternalServerError);
+        }
+
+        let openai_response = response.json::<OpenAiResponse>().await.map_err(|e| {
+            tracing::error!("failed to parse openrouter web search response: {}", e);
+            AppError::InternalServerError
+        })?;
+
+        Ok(openai_response
+            .choices
+            .get(0)
+            .map(|c| c.message.content.clone())
+            .unwrap_or_default())
+    }
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError> {
+        let model_with_web = if model.contains(":online") {
+            model.to_string()
+        } else {
+            format!("{}:online", model)
+        };
+
+        let response = self
+            .client
+            .post("https://openrouter.ai/api/v1/chat/completions")
+            .bearer_auth(&self.api_key)
+            .json(&serde_json::json!({
+                "model": model_with_web,
+                "messages": messages,
+                "stream": true,
+            }))
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            tracing::error!("openrouter web search streaming api error: {:?}", response.text().await);
+            return Err(AppError::InternalServerError);
+        }
+
+        let byte_stream = response.bytes_stream();
+
+        let stream = async_stream::stream! {
+            let mut inner_stream = byte_stream;
+            while let Some(chunk_result) = inner_stream.next().await {
+                let chunk = match chunk_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("openrouter web search stream chunk error: {}", e);
+                        yield Err(AppError::InternalServerError);
+                        break;
+                    }
+                };
+
+                for line in chunk.split(|&b| b == b'\n') {
+                    if line.starts_with(b"data: ") {
+                        let data = &line[6..];
+                        if data == b"[DONE]" {
+                            break;
+                        }
+                        if let Ok(parsed) = serde_json::from_slice::<OpenAiStreamResponse>(data) {
+                            if let Some(content) = parsed.choices.get(0).and_then(|c| c.delta.content.as_ref()) {
+                                yield Ok(content.clone());
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    fn supports_web_search(&self) -> bool {
+        true
     }
 }
 
@@ -843,6 +1120,22 @@ impl LLMClient for XaiClient {
 
         Ok(Box::pin(stream))
     }
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
+        self.chat(model, messages).await
+    }
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError> {
+        self.chat_stream(model, messages).await
+    }
+
+    fn supports_web_search(&self) -> bool {
+        false
+    }
 }
 
 pub struct GeminiClient {
@@ -929,6 +1222,65 @@ impl LLMClient for GeminiClient {
             .and_then(|c| c.content.parts.get(0))
             .map(|p| p.text.clone())
             .unwrap_or_default())
+    }
+
+    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
+        let mut contents = Vec::new();
+
+        for message in messages {
+            if let (Some(role), Some(content)) = (
+                message.get("role").and_then(|r| r.as_str()),
+                message.get("content").and_then(|c| c.as_str()),
+            ) {
+                if role == "system" {
+                    continue;
+                }
+                let gemini_role = if role == "user" { "user" } else { "model" };
+                contents.push(serde_json::json!({
+                    "role": gemini_role,
+                    "parts": [{"text": content}]
+                }));
+            }
+        }
+
+        let response = self
+            .client
+            .post(&format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
+                model, self.api_key
+            ))
+            .json(&serde_json::json!({
+                "contents": contents,
+                "tools": [
+                    {
+                        "google_search": {}
+                    }
+                ]
+            }))
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            tracing::error!("gemini web search api error: {:?}", response.text().await);
+            return Err(AppError::InternalServerError);
+        }
+
+        let gemini_response = response.json::<GeminiResponse>().await.map_err(|e| {
+            tracing::error!("failed to parse gemini web search response: {}", e);
+            AppError::InternalServerError
+        })?;
+
+        Ok(gemini_response
+            .candidates
+            .get(0)
+            .and_then(|c| c.content.parts.get(0))
+            .map(|p| p.text.clone())
+            .unwrap_or_default())
+    }
+
+    fn supports_web_search(&self) -> bool {
+        true
     }
 
     async fn chat_stream(
@@ -1026,7 +1378,119 @@ impl LLMClient for GeminiClient {
                                 }
                             }
                         } else {
-                            tracing::warn!("Failed to parse Gemini JSON: {}", data_str);
+                            // Only warn if it's not just grounding metadata
+                            if !data_str.contains("groundingMetadata") {
+                                tracing::warn!("Failed to parse Gemini JSON: {}", data_str);
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        Ok(Box::pin(stream))
+    }
+
+    async fn chat_stream_with_web_search(
+        &self,
+        model: &str,
+        messages: Vec<Value>,
+    ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError> {
+        let mut contents = Vec::new();
+
+        for message in messages {
+            if let (Some(role), Some(content)) = (
+                message.get("role").and_then(|r| r.as_str()),
+                message.get("content").and_then(|c| c.as_str()),
+            ) {
+                if role == "system" {
+                    continue;
+                }
+                let gemini_role = if role == "user" { "user" } else { "model" };
+                contents.push(serde_json::json!({
+                    "role": gemini_role,
+                    "parts": [{"text": content}]
+                }));
+            }
+        }
+
+        let response = self
+            .client
+            .post(&format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, self.api_key))
+            .json(&serde_json::json!({
+                "contents": contents,
+                "tools": [
+                    {
+                        "google_search": {}
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.7,
+                    "topP": 0.8,
+                    "topK": 40,
+                    "maxOutputTokens": 8192,
+                }
+            }))
+            .send()
+            .await
+            .map_err(|_| AppError::InternalServerError)?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "Gemini web search streaming API error: status {}, body: {}",
+                status,
+                error_text
+            );
+            return Err(AppError::InternalServerError);
+        }
+
+        let byte_stream = response.bytes_stream();
+
+        let stream = async_stream::stream! {
+            let mut inner_stream = byte_stream;
+
+            while let Some(chunk_result) = inner_stream.next().await {
+                let chunk = match chunk_result {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("Gemini web search stream chunk error: {}", e);
+                        yield Err(AppError::InternalServerError);
+                        break;
+                    }
+                };
+
+                for line in chunk.split(|&b| b == b'\n') {
+                    if line.starts_with(b"data: ") {
+                        let data = &line[6..];
+                        let data_str = String::from_utf8_lossy(data);
+
+                        if data.is_empty() || data == b"[DONE]" {
+                            continue;
+                        }
+
+                        if let Ok(parsed) = serde_json::from_slice::<Value>(data) {
+                            if let Some(candidates) = parsed.get("candidates").and_then(|c| c.as_array()) {
+                                if let Some(candidate) = candidates.get(0) {
+                                    if let Some(content) = candidate.get("content") {
+                                        if let Some(parts) = content.get("parts").and_then(|p| p.as_array()) {
+                                            if let Some(part) = parts.get(0) {
+                                                if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
+                                                    if !text.is_empty() {
+                                                        yield Ok(text.to_string());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            // Only warn if it's not just grounding metadata
+                            if !data_str.contains("groundingMetadata") {
+                                tracing::warn!("Failed to parse Gemini web search JSON: {}", data_str);
+                            }
                         }
                     }
                 }

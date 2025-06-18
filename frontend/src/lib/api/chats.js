@@ -69,12 +69,18 @@ export const chatAPI = {
   // Stream a message to a chat
   async streamMessage(chatId, message, options = {}) {
     try {
+      const requestBody = {
+        content: message
+      };
+      
+      if (options.webSearch !== undefined) {
+        requestBody.web_search = options.webSearch;
+      }
+      
       const response = await fetch(`/api/chats/${chatId}/stream`, {
         method: 'POST',
         headers: api.getHeaders(),
-        body: JSON.stringify({
-          content: message
-        })
+        body: JSON.stringify(requestBody)
       });
 
       if (!response.ok) {

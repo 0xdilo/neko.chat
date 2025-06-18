@@ -21,6 +21,7 @@
 		activeChatMessages,
 		activeChat,
 		currentChat,
+		chats,
 		sendMessage,
 		loadChats,
 		createChat,
@@ -29,6 +30,7 @@
 		updateMessageInActiveChat,
 		sendParallelMessage,
 		deleteMessage,
+		buildChatTree,
 	} from "$lib/stores/chats.js";
 	import { showError, showSuccess } from "$lib/stores/app.js";
 	import { api } from "$lib/api/client.js";
@@ -41,6 +43,8 @@
 		getProviderDisplayName,
 		loadEnabledModels,
 		getFirstEnabledModel,
+		anySelectedModelSupportsWebSearch,
+		lastUsedModel,
 	} from "$lib/stores/models.js";
 	import { rightSidebarCollapsed, sidebarCollapsed } from "$lib/stores/ui.js";
 
@@ -84,6 +88,12 @@
 	// Use reactive statements for dynamic models
 	$: userEnabledModels = $enabledModels;
 	$: modelsByProvider = $enabledModelsByProvider;
+	$: webSearchSupported = anySelectedModelSupportsWebSearch(currentSelectedModels, userEnabledModels);
+	
+	// Reset web search when switching to models that don't support it
+	$: if (!webSearchSupported && webAccessEnabled) {
+		webAccessEnabled = false;
+	}
 	$: currentChatLoading = $activeChat && loadingChats.has($activeChat);
 	$: availableProviders = Object.entries(modelsByProvider).map(
 		([provider, models]) => ({
@@ -130,6 +140,12 @@
 				if (chatModel) {
 					currentSelectedModels = [chatModel.model_id];
 					chatModelMemory[chatId] = [chatModel.model_id];
+					
+					// Update lastUsedModel with current chat's model
+					lastUsedModel.set({
+						provider: chatModel.provider,
+						model: chatModel.model_id
+					});
 				}
 			}
 		}
@@ -232,6 +248,7 @@
 		try {
 			await loadChats();
 			await loadEnabledModels();
+			lastUsedModel.init();
 
 			if (typeof window !== "undefined") {
 				window.addEventListener("toggle-model-selector", handleToggleModelSelector);
@@ -388,15 +405,18 @@ function autoResize(node, _val) {
 				// Pass the selected model to sendMessage for single model usage
 				if (currentSelectedModels.length === 0) {
 					// No model selected, use default
-					await sendMessage(content);
+					await sendMessage(content, { webSearch: webAccessEnabled });
 				} else {
 					const selectedModelId = currentSelectedModels[0];
 					const selectedModel = userEnabledModels.find((m) => m.model_id === selectedModelId);
 					
 					const modelOptions = selectedModel ? {
 						provider: selectedModel.provider,
-						model: selectedModel.model_id
-					} : {};
+						model: selectedModel.model_id,
+						webSearch: webAccessEnabled
+					} : {
+						webSearch: webAccessEnabled
+					};
 					
 					await sendMessage(content, modelOptions);
 				}
@@ -722,6 +742,15 @@ async function handleKeydown(e) {
 			}
 
 			showSuccess("Branch created successfully");
+			
+			// Rebuild chat tree to show the new branch relationship
+			const currentChats = await new Promise((resolve) => {
+				chats.subscribe((chatList) => resolve(chatList))();
+			});
+			buildChatTree(currentChats);
+			
+			// Open right sidebar to show the graph like parallel chat
+			rightSidebarCollapsed.set(false);
 		} catch (error) {
 			console.error("Failed to create branch:", error);
 			showError("Failed to create branch");
@@ -773,6 +802,17 @@ async function handleKeydown(e) {
 					 selectedModel.model_id !== $currentChat.model)) {
 					updateChatModel(chatId, selectedModel.provider, selectedModel.model_id);
 				}
+			}
+		}
+		
+		// Update last used model for new chat creation (only for single model selection)
+		if (newSelectedModels.length === 1) {
+			const selectedModel = userEnabledModels.find(m => m.model_id === newSelectedModels[0]);
+			if (selectedModel) {
+				lastUsedModel.set({
+					provider: selectedModel.provider,
+					model: selectedModel.model_id
+				});
 			}
 		}
 	};
@@ -1057,13 +1097,16 @@ async function handleKeydown(e) {
 				<GitFork size={18} />
 			</button>
 
-			<button
-				class="input-action-button"
-				class:active={webAccessEnabled}
-				on:click={() => (webAccessEnabled = !webAccessEnabled)}
-			>
-				<Globe size={18} />
-			</button>
+			{#if webSearchSupported}
+				<button
+					class="input-action-button"
+					class:active={webAccessEnabled}
+					on:click={() => (webAccessEnabled = !webAccessEnabled)}
+					title="Enable web search"
+				>
+					<Globe size={18} />
+				</button>
+			{/if}
 
 			<textarea
 				bind:value={messageInput}
