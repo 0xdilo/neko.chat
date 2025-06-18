@@ -25,18 +25,17 @@
 	import { isAuthenticated, logout } from "$lib/stores/auth.js";
 	import { theme, themes } from "$lib/theme.js";
 	import { onMount, onDestroy } from "svelte";
+	import ChatSearchModal from "./ChatSearchModal.svelte";
 
 	let searchTerm = "";
 	let searchInput; // for bind:this
 	let selectedIndex = 0;
 	let isNavigationMode = false;
+	let showSearchModal = false;
 
-	// Filter chats based on search and pin status
-	$: filteredPinnedChats = $chats
-		.filter((c) => c.pinned && c.title.toLowerCase().includes(searchTerm.toLowerCase()));
-	
-	$: filteredUnpinnedChats = $chats
-		.filter((c) => !c.pinned && c.title.toLowerCase().includes(searchTerm.toLowerCase()));
+	// Filter chats based on pin status
+	$: filteredPinnedChats = $chats.filter((c) => c.pinned);
+	$: filteredUnpinnedChats = $chats.filter((c) => !c.pinned);
 
 	// Create list of all navigable items for arrow key navigation
 	$: navigationItems = [
@@ -134,13 +133,22 @@
 	function handleKeydown(event) {
 		if ((event.metaKey || event.ctrlKey) && event.key === "k") {
 			event.preventDefault();
-			searchInput?.focus();
+			showSearchModal = true;
 		}
+	}
+	
+	function openSearchModal() {
+		showSearchModal = true;
 	}
 
 	function handleSidebarKeydown(event) {
 		// Only handle keys when sidebar is open and in navigation mode
 		if ($sidebarCollapsed || !isNavigationMode) {
+			return;
+		}
+
+		// Don't interfere when search modal is open
+		if (showSearchModal) {
 			return;
 		}
 
@@ -243,11 +251,11 @@
 		<button
 			class="action-btn"
 			aria-label="search"
-			on:click={() => searchInput?.focus()}
+			on:click={openSearchModal}
 		>
 			<Search />
 		</button>
-		<button class="action-btn" aria-label="new chat">
+		<button class="action-btn" aria-label="new chat" on:click={handleNewChat}>
 			<Plus />
 		</button>
 	</div>
@@ -274,16 +282,10 @@
 					<Plus size={18} />
 					<span>new chat</span>
 				</button>
-				<div class="search-container">
+				<button class="search-button" on:click={openSearchModal}>
 					<Search class="search-icon" size={16} />
-					<input
-						type="text"
-						placeholder="search... (Ctrl+k)"
-						class="search-input"
-						bind:value={searchTerm}
-						bind:this={searchInput}
-					/>
-				</div>
+					<span>Search chats... (Ctrl+K)</span>
+				</button>
 			</div>
 
 			<div class="chat-list">
@@ -420,6 +422,8 @@
 		</div>
 	</aside>
 </div>
+
+<ChatSearchModal bind:isOpen={showSearchModal} on:close={() => showSearchModal = false} />
 
 <style>
 	.sidebar-container {
@@ -562,34 +566,31 @@
 		color: white;
 	}
 
-	.search-container {
-		position: relative;
+	.search-button {
+		width: 100%;
 		display: flex;
 		align-items: center;
+		gap: var(--spacing-sm);
+		padding: var(--spacing-sm) var(--spacing-md);
+		background-color: var(--bg-tertiary);
+		border: 1px solid var(--border-primary);
+		border-radius: var(--radius-lg);
+		color: var(--text-tertiary);
+		font-size: var(--font-size-sm);
+		cursor: pointer;
+		transition: all var(--transition-fast);
+		text-align: left;
+	}
+
+	.search-button:hover {
+		background-color: var(--interactive-hover);
+		border-color: var(--border-secondary);
+		color: var(--text-secondary);
 	}
 
 	.search-icon {
-		position: absolute;
-		left: 12px;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-tertiary);
-		pointer-events: none;
-		z-index: 2;
-	}
-
-	.search-input {
-		width: 100%;
-          border: 0px;
-          border-radius: 0px;
-		color: var(--text-primary);
-		font-size: var(--font-size-sm);
-		transition: border-color var(--transition-fast);
-		box-shadow: none;
-	}
-
-	.search-input:focus {
-          border: 0px;
+		color: inherit;
+		flex-shrink: 0;
 	}
 
 	.chat-list {
