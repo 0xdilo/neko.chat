@@ -89,7 +89,6 @@ export function buildChatTree(chatList) {
       tree[chat.id] = chatMap[chat.id];
     }
   });
-
   chatTree.set(tree);
 }
 
@@ -113,9 +112,15 @@ export async function createChat(chatData = {}) {
       provider: modelToUse.provider,
       model: modelToUse.model,
       is_branch: chatData.is_branch || false,
+      parent_chat_id: chatData.parent_chat_id,
+      branch_point_message_id: chatData.branch_point_message_id,
     });
 
-    chats.update((chatList) => [newChat, ...chatList]);
+    chats.update((chatList) => {
+      const updatedList = [newChat, ...chatList];
+      buildChatTree(updatedList);
+      return updatedList;
+    });
     await setActiveChat(newChat.id);
     showSuccess("Chat created successfully");
     return newChat;

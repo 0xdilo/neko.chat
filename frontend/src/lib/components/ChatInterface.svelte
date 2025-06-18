@@ -761,11 +761,10 @@ async function handleKeydown(e) {
 
 			showSuccess("Branch created successfully");
 			
-			// Rebuild chat tree to show the new branch relationship
-			const currentChats = await new Promise((resolve) => {
-				chats.subscribe((chatList) => resolve(chatList))();
-			});
-			buildChatTree(currentChats);
+			// Refresh chat list and rebuild tree to show the new branch relationship
+			const chatList = await chatAPI.getChats();
+			chats.set(chatList);
+			buildChatTree(chatList);
 			
 			// Open right sidebar to show the graph like parallel chat
 			rightSidebarCollapsed.set(false);

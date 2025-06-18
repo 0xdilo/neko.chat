@@ -99,12 +99,6 @@
       case "xai":
         return assets.xai[assetType];
       case "openrouter":
-        if (modelId.includes("openai") || modelId.includes("gpt"))
-          return assets.openai[assetType];
-        if (modelId.includes("anthropic") || modelId.includes("claude"))
-          return assets.anthropic[assetType];
-        if (modelId.includes("google") || modelId.includes("gemini"))
-          return assets.google[assetType];
         return assets.openrouter[assetType];
       default:
         return assets.default[assetType];
