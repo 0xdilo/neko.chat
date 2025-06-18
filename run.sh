@@ -2,11 +2,20 @@
 
 set -em
 
+# determine the js package manager. prefer bun, fallback to npm.
+if command -v bun &>/dev/null; then
+  pkg_mgr="bun"
+else
+  pkg_mgr="npm"
+fi
+echo "--- using '$pkg_mgr' for js tasks ---"
+
 pids=()
 
 cleanup() {
   echo "--- shutting down processes ---"
   for pid in "${pids[@]}"; do
+    # kill the whole process group. this is correct.
     kill -s sigint -- "-$pid" 2>/dev/null
   done
   wait
@@ -21,13 +30,17 @@ usage() {
 
 install_deps() {
   echo "--- installing frontend dependencies ---"
-  (cd frontend && bun install)
+  (cd frontend && "$pkg_mgr" install)
   echo "--- building backend dependencies (release) ---"
   (cd backend && cargo build --release)
 }
 
+# this check is kinda naive but fine for this purpose.
 deps_installed() {
-  [[ -d frontend/node_modules ]] && [[ -f backend/target/release/$(basename "$(pwd)") ]]
+  local backend_name
+  backend_name=$(basename "$(pwd)")
+  [[ -d frontend/node_modules ]] &&
+    [[ -f backend/target/release/$backend_name ]]
 }
 
 ensure_deps() {
@@ -44,7 +57,8 @@ start_dev() {
   pids+=($!)
 
   echo "--- starting frontend (web) [dev] ---"
-  (cd frontend && bun run dev) &
+  # npm needs 'run' explicitly for custom scripts. bun doesn't, but this works for both.
+  (cd frontend && "$pkg_mgr" run dev) &
   pids+=($!)
 
   echo "--- dev services started. pids: ${pids[*]} ---"
@@ -56,14 +70,14 @@ start_dev() {
 start_preview() {
   ensure_deps
   echo "--- building frontend for production ---"
-  (cd frontend && bun run build)
+  (cd frontend && "$pkg_mgr" run build)
 
   echo "--- starting backend (api) [release] ---"
   (cd backend && cargo run --release) &
   pids+=($!)
 
   echo "--- starting frontend (web) [preview] ---"
-  (cd frontend && bun run preview) &
+  (cd frontend && "$pkg_mgr" run preview) &
   pids+=($!)
 
   echo "--- preview services started. pids: ${pids[*]} ---"
@@ -75,16 +89,8 @@ start_preview() {
 command=${1:-start}
 
 case "$command" in
-  install)
-    install_deps
-    ;;
-  start)
-    start_dev
-    ;;
-  preview) 
-    start_preview
-    ;;
-  *)
-    usage
-    ;;
+install) install_deps ;;
+start) start_dev ;;
+preview) start_preview ;;
+*) usage ;;
 esac

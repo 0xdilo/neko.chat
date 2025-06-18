@@ -48,6 +48,13 @@ I didn't tested alot of things, expect bugs.
 
 Nothing fancy, just works.
 
+## dependencies
+
+to build and run this project, you will need the following installed on your system:
+
+-   **rust**: the backend is built with rust. the recommended way to install it is via [rustup](https://rustup.rs/), which also includes `cargo`, the rust package manager and build tool.
+-   **bun**: the frontend uses bun as its javascript runtime and package manager. you can find installation instructions on the [official bun website](https://bun.sh/). alternatively, `npm` (which is included with [node.js](https://nodejs.org/)) can be used.
+
 ## Running it
 
 ### Easy mode (recommended)
