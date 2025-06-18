@@ -127,11 +127,6 @@
 
 	function saveAllSettings() {
 		triggerSave();
-		console.log("saving all settings...", {
-			apiKeys,
-			systemPrompts,
-			appearanceSettings,
-		});
 	}
 </script>
 

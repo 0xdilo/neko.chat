@@ -601,14 +601,14 @@ impl LLMClient for AnthropicClient {
                     if line.starts_with(b"data: ") {
                         let data = &line[6..];
                         let data_str = String::from_utf8_lossy(data);
-                        tracing::debug!("Anthropic stream data: {}", data_str);
+                        // tracing::debug!("Anthropic stream data: {}", data_str);
 
                         if data == b"[DONE]" {
                             break;
                         }
 
                         if let Ok(parsed) = serde_json::from_slice::<Value>(data) {
-                            tracing::debug!("Anthropic parsed JSON: {:?}", parsed);
+                            // tracing::debug!("Anthropic parsed JSON: {:?}", parsed);
 
                             if let Some(event_type) = parsed.get("type").and_then(|t| t.as_str()) {
                                 if event_type == "content_block_delta" {
@@ -1005,10 +1005,10 @@ impl LLMClient for GeminiClient {
                             continue;
                         }
 
-                        tracing::debug!("Gemini stream data: {}", data_str);
+                        // tracing::debug!("Gemini stream data: {}", data_str);
 
                         if let Ok(parsed) = serde_json::from_slice::<Value>(data) {
-                            tracing::debug!("Gemini parsed JSON: {:?}", parsed);
+                            // tracing::debug!("Gemini parsed JSON: {:?}", parsed);
 
                             if let Some(candidates) = parsed.get("candidates").and_then(|c| c.as_array()) {
                                 if let Some(candidate) = candidates.get(0) {

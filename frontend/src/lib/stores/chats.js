@@ -221,12 +221,12 @@ export async function deleteMessage(messageId) {
 
   try {
     await chatAPI.deleteMessage(currentChatId, messageId);
-    
+
     // Remove message from UI immediately
     activeChatMessages.update((messages) =>
-      messages.filter((msg) => msg.id !== messageId)
+      messages.filter((msg) => msg.id !== messageId),
     );
-    
+
     showSuccess("Message deleted");
   } catch (err) {
     console.error("Failed to delete message:", err);
@@ -276,10 +276,10 @@ export async function sendMessage(content, options = {}) {
   if (!currentChatId) {
     try {
       // Use the model from options or fallback to first enabled model
-      const selectedModel = options.model ? 
-        { provider: options.provider, model: options.model } : 
-        getFirstEnabledModel();
-      
+      const selectedModel = options.model
+        ? { provider: options.provider, model: options.model }
+        : getFirstEnabledModel();
+
       const newChat = await createChat({
         title: generateChatTitle(content),
         system_prompt: "You are a helpful AI assistant.",
@@ -708,11 +708,9 @@ export async function switchToBranch(chatId) {
   const streamingData = get(streamingMessages)[chatId];
 
   if (isStreaming && streamingData) {
-    console.log(`Switching to streaming branch ${chatId}, preserving messages`);
-    
     // For streaming chats, preserve current messages and manually manage the switch
     activeChat.set(chatId);
-    
+
     // Check if we have messages loaded
     const messages = get(activeChatMessages);
 
@@ -727,22 +725,26 @@ export async function switchToBranch(chatId) {
     // Load messages from database first
     try {
       const dbMessages = await chatAPI.getMessages(chatId);
-      
+
       // Check if streaming messages are already in database
-      const userInDb = dbMessages.some(msg => 
-        msg.role === "user" && msg.content === streamingData.userMessage.content
+      const userInDb = dbMessages.some(
+        (msg) =>
+          msg.role === "user" &&
+          msg.content === streamingData.userMessage.content,
       );
-      const assistantInDb = dbMessages.some(msg => 
-        msg.role === "assistant" && msg.id === streamingData.assistantMessageId
+      const assistantInDb = dbMessages.some(
+        (msg) =>
+          msg.role === "assistant" &&
+          msg.id === streamingData.assistantMessageId,
       );
-      
+
       let currentMessages = [...dbMessages];
-      
+
       // Only add streaming messages if they're not already in the database
       if (!userInDb) {
         currentMessages.push(streamingData.userMessage);
       }
-      
+
       if (!assistantInDb) {
         const assistantMessage = {
           ...streamingData.assistantMessage,
@@ -752,12 +754,20 @@ export async function switchToBranch(chatId) {
         currentMessages.push(assistantMessage);
       } else {
         // Update existing message in database with streaming content
-        currentMessages = currentMessages.map(msg => 
-          msg.role === "assistant" && msg.id !== streamingData.assistantMessageId ? msg :
-          msg.role === "assistant" ? { ...msg, content: streamingData.content || "", streaming: true } : msg
+        currentMessages = currentMessages.map((msg) =>
+          msg.role === "assistant" &&
+          msg.id !== streamingData.assistantMessageId
+            ? msg
+            : msg.role === "assistant"
+              ? {
+                  ...msg,
+                  content: streamingData.content || "",
+                  streaming: true,
+                }
+              : msg,
         );
       }
-      
+
       activeChatMessages.set(currentMessages);
     } catch (err) {
       console.error("Failed to load messages for streaming chat:", err);
@@ -768,10 +778,10 @@ export async function switchToBranch(chatId) {
           ...streamingData.assistantMessage,
           content: streamingData.content || "",
           streaming: true,
-        }
+        },
       ]);
     }
-    
+
     // Set up a reactive subscription to update UI when streaming content changes
     const unsubscribe = streamingMessages.subscribe((messages) => {
       const currentStreamingData = messages[chatId];
@@ -782,14 +792,17 @@ export async function switchToBranch(chatId) {
         });
       }
     });
-    
+
     // Clean up subscription when streaming completes or chat changes
     const originalStreamingChats = get(streamingChats);
     if (originalStreamingChats.has(chatId)) {
       const checkComplete = setInterval(() => {
         const currentStreamingChats = get(streamingChats);
         const currentActiveChat = get(activeChat);
-        if (!currentStreamingChats.has(chatId) || currentActiveChat !== chatId) {
+        if (
+          !currentStreamingChats.has(chatId) ||
+          currentActiveChat !== chatId
+        ) {
           unsubscribe();
           clearInterval(checkComplete);
         }

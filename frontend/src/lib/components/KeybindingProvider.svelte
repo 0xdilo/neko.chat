@@ -22,7 +22,6 @@
 			window.addEventListener("toggle-theme", handleToggleTheme);
 			window.addEventListener("new-chat", handleNewChat);
 			window.addEventListener("escape-action", handleEscape);
-			window.addEventListener("command-palette", handleCommandPalette);
 			window.addEventListener("model-modal", handleModelModal);
 			window.addEventListener("focus-input", handleFocusInput); // listener for input focus
 		}
@@ -54,10 +53,6 @@
 			window.removeEventListener("toggle-theme", handleToggleTheme);
 			window.removeEventListener("new-chat", handleNewChat);
 			window.removeEventListener("escape-action", handleEscape);
-			window.removeEventListener(
-				"command-palette",
-				handleCommandPalette,
-			);
 			window.removeEventListener("model-modal", handleModelModal);
 			window.removeEventListener("focus-input", handleFocusInput); // cleanup
 		}
@@ -90,10 +85,6 @@
 				activeElement.blur();
 			}
 		}
-	}
-
-	function handleCommandPalette() {
-		console.log("opening command palette...");
 	}
 
 	function handleModelModal() {

@@ -5,20 +5,25 @@
   function toggleTheme() {
     theme.toggle();
   }
+
+  // Only show toggle for basic dark/light themes
+  $: isBasicTheme = $theme === themes.dark || $theme === themes.light;
 </script>
 
-<button
-  on:click={toggleTheme}
-  class="theme-toggle"
-  aria-label="Toggle theme"
-  title="Toggle between dark and light theme"
->
-  {#if $theme === themes.dark}
-    <Sun size={18} />
-  {:else}
-    <Moon size={18} />
-  {/if}
-</button>
+{#if isBasicTheme}
+  <button
+    on:click={toggleTheme}
+    class="theme-toggle"
+    aria-label="Toggle theme"
+    title="Toggle between dark and light theme"
+  >
+    {#if $theme === themes.dark}
+      <Sun size={18} />
+    {:else}
+      <Moon size={18} />
+    {/if}
+  </button>
+{/if}
 
 <style>
   .theme-toggle {

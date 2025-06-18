@@ -1,60 +1,140 @@
 <script>
 	import { theme as themeStore, themes } from "$lib/theme.js";
+	import { appearance, updateAppearance } from "$lib/stores/settings.js";
 	import { CheckCircle2, Sun, Moon } from "lucide-svelte";
 
-	// this data should probably live in a global config/theme file
+	// Available themes - popular themes including nvim-inspired ones
 	const availableThemes = [
 		{
-			id: "neko-dark",
-			name: "neko dark",
-			colors: ["#A3A3A3", "#27272A", "#4ADE80", "#F4F4F5"],
+			id: themes.dark,
+			name: "Neko Dark",
+			colors: ["#e4e4e4", "#0c0c0c", "#8a8a8a", "#1c1c1c"],
+			description: "Default dark theme with minimal contrast"
 		},
 		{
-			id: "tokyonight",
-			name: "tokyo night",
-			colors: ["#a9b1d6", "#1a1b26", "#7aa2f7", "#c0caf5"],
+			id: themes.light,
+			name: "Neko Light", 
+			colors: ["#0c0c0c", "#ffffff", "#6c6c6c", "#f5f5f5"],
+			description: "True black/white inverse of dark mode"
 		},
 		{
-			id: "catppuccin-latte",
-			name: "catppuccin latte",
+			id: themes.noir256,
+			name: "Noir256",
+			colors: ["#bcbcbc", "#000000", "#ff0000", "#121212"],
+			description: "Authentic noir256 vim theme with red accents"
+		},
+		{
+			id: themes.white,
+			name: "Pure White",
+			colors: ["#000000", "#ffffff", "#333333", "#f8f8f8"],
+			description: "Bright white theme with maximum contrast"
+		},
+		{
+			id: themes.tokyonight,
+			name: "Tokyo Night",
+			colors: ["#c0caf5", "#1a1b26", "#7aa2f7", "#24283b"],
+			description: "Popular nvim theme with blue/purple accents"
+		},
+		{
+			id: themes.tokyodark,
+			name: "Tokyo Dark",
+			colors: ["#A0A8CD", "#11121D", "#7199EE", "#1A1B2A"],
+			description: "Deep, muted variant of Tokyo Night theme"
+		},
+		{
+			id: themes.catppuccin_mocha,
+			name: "Catppuccin Mocha",
+			colors: ["#cdd6f4", "#1e1e2e", "#89b4fa", "#313244"],
+			description: "Soothing pastel theme with warm colors"
+		},
+		{
+			id: themes.catppuccin_latte,
+			name: "Catppuccin Latte",
 			colors: ["#4c4f69", "#eff1f5", "#1e66f5", "#dce0e8"],
+			description: "Light variant of Catppuccin theme"
 		},
 		{
-			id: "catppuccin-mocha",
-			name: "catppuccin mocha",
-			colors: ["#cdd6f4", "#1e1e2e", "#89b4fa", "#11111b"],
+			id: themes.nord,
+			name: "Nord",
+			colors: ["#d8dee9", "#2e3440", "#88c0d0", "#434c5e"],
+			description: "Arctic-inspired color palette"
 		},
 		{
-			id: "nord",
-			name: "nord",
-			colors: ["#d8dee9", "#2e3440", "#88c0d0", "#4c566a"],
+			id: themes.rosepine,
+			name: "Rosé Pine",
+			colors: ["#e0def4", "#191724", "#c4a7e7", "#26233a"],
+			description: "All natural pine, faux fur and a bit of soho vibes"
 		},
 		{
-			id: "rose-pine",
-			name: "rosé pine",
-			colors: ["#e0def4", "#191724", "#eb6f92", "#26233a"],
+			id: themes.gruvbox_dark,
+			name: "Gruvbox Dark",
+			colors: ["#ebdbb2", "#282828", "#fabd2f", "#3c3836"],
+			description: "Retro groove color scheme with warm tones"
 		},
+		{
+			id: themes.gruvbox_light,
+			name: "Gruvbox Light",
+			colors: ["#3c3836", "#fbf1c7", "#b57614", "#ebdbb2"],
+			description: "Light variant of the retro groove theme"
+		},
+		{
+			id: themes.onedark,
+			name: "One Dark",
+			colors: ["#abb2bf", "#282c34", "#61afef", "#2c313c"],
+			description: "Atom's iconic One Dark theme"
+		},
+		{
+			id: themes.dracula,
+			name: "Dracula",
+			colors: ["#f8f8f2", "#282a36", "#ff79c6", "#44475a"],
+			description: "Dark theme with vibrant pink and purple"
+		},
+		{
+			id: themes.kawaii_light,
+			name: "Kawaii Light",
+			colors: ["#7a4f5a", "#fff5f7", "#ff9bb5", "#f8d7dd"],
+			description: "Cute pastel theme with kawaii aesthetics :3"
+		},
+		{
+			id: themes.kawaii_dark,
+			name: "Kawaii Dark",
+			colors: ["#f5d0f7", "#2d1b2e", "#e892f0", "#4d3b4e"],
+			description: "Adorable dark theme with kawaii vibes >_<"
+		}
 	];
+
+	function handleThemeChange(themeId) {
+		themeStore.set(themeId);
+		updateAppearance({ theme: themeId });
+	}
+
+	// Check if current theme is a basic dark/light theme
+	$: isBasicTheme = $themeStore === themes.dark || $themeStore === themes.light;
 </script>
 
 <div class="section-header">
 	<div>
 		<h2 class="section-title">appearance</h2>
 		<p class="section-description">
-			select a color scheme that suits your style.
+			Choose from popular themes including nvim-inspired color schemes.
 		</p>
 	</div>
-	<button
-		on:click={() => themeStore.toggle()}
-		class="mode-toggle"
-		aria-label="toggle light/dark mode"
-	>
-		{#if $themeStore === themes.dark}
-			<Sun size={18} />
-		{:else}
-			<Moon size={18} />
-		{/if}
-	</button>
+	{#if isBasicTheme}
+		<button
+			on:click={() => {
+				const newTheme = $themeStore === themes.dark ? themes.light : themes.dark;
+				handleThemeChange(newTheme);
+			}}
+			class="mode-toggle"
+			aria-label="toggle light/dark mode"
+		>
+			{#if $themeStore === themes.dark}
+				<Sun size={18} />
+			{:else}
+				<Moon size={18} />
+			{/if}
+		</button>
+	{/if}
 </div>
 
 <div class="theme-grid">
@@ -62,18 +142,23 @@
 		<button
 			class="theme-card"
 			class:active={$themeStore === theme.id}
-			on:click={() => themeStore.set(theme.id)}
+			on:click={() => handleThemeChange(theme.id)}
 		>
 			<div class="theme-palette">
 				{#each theme.colors as color}
 					<div class="palette-color" style="background-color: {color};"></div>
 				{/each}
 			</div>
-			<div class="theme-name">
-				{theme.name}
-				{#if $themeStore === theme.id}
-					<CheckCircle2 size={16} class="active-check" />
-				{/if}
+			<div class="theme-info">
+				<div class="theme-name">
+					{theme.name}
+					{#if $themeStore === theme.id}
+						<CheckCircle2 size={16} class="active-check" />
+					{/if}
+				</div>
+				<div class="theme-description">
+					{theme.description}
+				</div>
 			</div>
 		</button>
 	{/each}
@@ -144,14 +229,21 @@
 	.palette-color {
 		flex: 1;
 	}
-	.theme-name {
+	.theme-info {
 		padding: var(--spacing-md);
+	}
+	.theme-name {
 		font-weight: 600;
 		color: var(--text-primary);
-		text-transform: capitalize;
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
+		margin-bottom: var(--spacing-xs);
+	}
+	.theme-description {
+		font-size: var(--font-size-sm);
+		color: var(--text-secondary);
+		line-height: var(--line-height-tight);
 	}
 	.active-check {
 		color: var(--accent-primary);

@@ -729,7 +729,6 @@ async function handleKeydown(e) {
 	};
 
 	const handleFileSelect = () => fileInput.click();
-	const onFileChange = (e) => console.log("files:", e.target.files);
 	const toggleModelSelector = () => (showModelSelector = !showModelSelector);
 
 	const handleDeleteMessage = async (messageId) => {
@@ -1389,7 +1388,7 @@ on:keydown={handleKeydown}
 		position: relative;
 		display: flex;
 		align-items: flex-end;
-		background-color: rgba(var(--bg-secondary-rgb, 28, 28, 30), 0.9);
+		background-color: var(--bg-secondary);
 		backdrop-filter: blur(16px);
 		-webkit-backdrop-filter: blur(16px);
 		border: 1px solid var(--border-primary);
@@ -1399,7 +1398,8 @@ on:keydown={handleKeydown}
 		max-width: var(--chat-max-width, 800px);
 		margin: 0 auto;
 		pointer-events: auto;
-		box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--shadow-lg);
+		opacity: 0.95;
 	}
 	.input-wrapper:focus-within {
 		border-color: var(--border-focus);
@@ -1481,7 +1481,7 @@ on:keydown={handleKeydown}
 		align-items: center;
 		gap: var(--spacing-sm);
 		padding: var(--spacing-sm) var(--spacing-md);
-		background-color: rgba(var(--bg-secondary-rgb, 40, 40, 42), 0.9);
+		background-color: var(--bg-secondary);
 		backdrop-filter: blur(12px);
 		-webkit-backdrop-filter: blur(12px);
 		border: 1px solid var(--border-primary);
@@ -1493,13 +1493,15 @@ on:keydown={handleKeydown}
 		cursor: pointer;
 		transition: all var(--transition-fast);
 		min-width: 120px;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+		box-shadow: var(--shadow-md);
+		opacity: 0.95;
 	}
 
 	.model-selector-button:hover {
-		background-color: rgba(var(--bg-tertiary-rgb, 55, 55, 58), 0.95);
+		background-color: var(--interactive-hover);
 		border-color: var(--border-secondary);
-		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+		box-shadow: var(--shadow-lg);
+		opacity: 1;
 	}
 
 	.model-selector-button.active {
@@ -1624,30 +1626,29 @@ on:keydown={handleKeydown}
 		position: absolute;
 		bottom: calc(95%);
 		right: var(--spacing-3xl);
-		background: rgba(var(--bg-secondary-rgb, 40, 40, 42), 0.95);
+		background: var(--bg-secondary);
 		backdrop-filter: blur(12px);
 		-webkit-backdrop-filter: blur(12px);
 		border: 1px solid var(--border-primary);
 		border-radius: var(--radius-xl);
-
 		color: var(--text-secondary);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-		opacity: 0;
+		box-shadow: var(--shadow-md);
+		opacity: 0.95;
 		transform: translateY(8px);
 		animation: fade-in 0.2s ease-out forwards;
 		pointer-events: auto;
 	}
 
 	.scroll-to-bottom-btn:hover {
-		background: rgba(var(--bg-tertiary-rgb, 55, 55, 58), 0.95);
+		background: var(--interactive-hover);
 		color: var(--text-primary);
 		transform: translateY(0) scale(1.05);
-		box-shadow: 0 6px 20px rgba(0, 0, 0, 0.2);
+		box-shadow: var(--shadow-lg);
 	}
 
 	.scroll-to-bottom-btn:active {

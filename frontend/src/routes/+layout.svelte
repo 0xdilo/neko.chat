@@ -21,25 +21,20 @@
   
   // Handle showing content when route changes after auth is checked
   $: if (authChecked && !isProtectedRoute) {
-    console.log('Non-protected route after auth check, showing content');
     showContent = true;
   }
   
   $: if (authChecked && !$isAuthenticated && isProtectedRoute) {
-    console.log('Redirecting to auth - not authenticated');
     goto('/auth');
   }
 
   $: if (authChecked && $isAuthenticated && currentPath === '/auth') {
-    console.log('Redirecting to home - authenticated');
     goto('/');
   }
 
   // Initialize models and API keys when user becomes authenticated
   $: if (authChecked && $isAuthenticated && !modelsInitialized) {
-    console.log('User authenticated, initializing models and API keys...');
     initializeModelsAfterAuth().then(() => {
-      console.log('Models and API keys initialization complete');
       modelsInitialized = true;
     });
   }
@@ -50,18 +45,12 @@
     initializeStores();
     
     // Check authentication status
-    console.log('Checking auth status...');
-    console.log('Current path:', currentPath);
-    console.log('Is protected route:', isProtectedRoute);
     
     const authResult = await refreshAuth();
-    console.log('Auth result:', authResult);
-    console.log('Is authenticated:', $isAuthenticated);
     authChecked = true;
     
     // Initialize models and load API keys only if authenticated
     if ($isAuthenticated) {
-      console.log('Already authenticated on mount, initializing models and API keys...');
       await initializeModelsAfterAuth();
       modelsInitialized = true;
     }
@@ -69,16 +58,13 @@
     // Handle route display logic after auth check
     if (isProtectedRoute) {
       if ($isAuthenticated) {
-        console.log('Authenticated, showing protected content');
         showContent = true;
       } else {
-        console.log('Not authenticated, redirecting to auth');
         goto('/auth');
         // Don't set showContent here - let the redirect happen and onMount will run again
       }
     } else {
       // Non-protected route (like /auth)
-      console.log('Non-protected route, showing content');
       showContent = true;
     }
   });

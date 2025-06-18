@@ -6,21 +6,8 @@
   $: name = $userName;
   $: userApiKeys = $apiKeys;
   $: keysLoaded = $apiKeysLoaded;
-
-  $: {
-    console.log('WelcomeMessage: userApiKeys changed:', userApiKeys);
-    console.log('WelcomeMessage: userApiKeys length:', userApiKeys ? userApiKeys.length : 'null/undefined');
-    console.log('WelcomeMessage: keysLoaded:', keysLoaded);
-    console.log('WelcomeMessage: Component will show:', !keysLoaded ? 'LOADING' : (!hasApiKeys ? 'NO KEYS MESSAGE' : 'WELCOME'));
-  }
-
   $: hasApiKeys = userApiKeys && userApiKeys.length > 0;
   
-  $: {
-    console.log('WelcomeMessage: hasApiKeys:', hasApiKeys);
-  }
-
-
   const examplePrompts = [
     'Explain quantum Meow simply',
     'What is the meaning of Meow?',

@@ -77,14 +77,11 @@
       let response;
 
       if (mode === 'login') {
-        console.log('authform: attempting login');
         response = await login(email, password);
       } else {
-        console.log('authform: attempting signup');
         response = await signup(email, password, name);
       }
 
-      console.log('authform: response received:', response);
 
       if (response.success) {
         showSuccess(mode === 'login' ? 'logged in successfully!' : 'account created successfully!');

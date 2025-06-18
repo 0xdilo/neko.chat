@@ -13,8 +13,8 @@
 	let newApiKey = { provider: "openai", key: "" };
 	let deletingProvider = null;
 	let isLoading = false;
-	let visibleKeys = new Set(); // Track which keys are visible
-	let decryptedKeys = new Map(); // Store decrypted keys
+	let visibleKeys = new Set();
+	let decryptedKeys = new Map();
 
 	onMount(async () => {
 		await loadApiKeys();
@@ -24,9 +24,6 @@
 		isLoading = true;
 		try {
 			const response = await keysAPI.getKeys();
-			console.log('ApiKeys: Loading keys from API:', response);
-			
-			// Backend returns direct array, not wrapped in response object
 			const keysArray = Array.isArray(response) ? response : [];
 			
 			const formattedKeys = keysArray.map(key => ({
@@ -35,13 +32,9 @@
 				masked: true
 			}));
 			
-			console.log('ApiKeys: Formatted keys:', formattedKeys);
-			
-			// Update both local state and global store
 			apiKeys = formattedKeys;
 			updateSetting('apiKeys', formattedKeys);
 			
-			console.log('ApiKeys: Updated global store with keys');
 		} catch (error) {
 			console.error('Failed to load API keys:', error);
 			showError('Failed to load API keys');
@@ -65,8 +58,8 @@
 				return;
 			}
 		}
-		visibleKeys = visibleKeys; // Trigger reactivity
-		decryptedKeys = decryptedKeys; // Trigger reactivity
+		visibleKeys = visibleKeys;
+		decryptedKeys = decryptedKeys; 
 	}
 
 	async function addKey() {
@@ -81,7 +74,6 @@
 			showSuccess('API key added successfully');
 			showAddModal = false;
 			
-			// Immediately update the store to trigger reactivity
 			const newKey = {
 				provider: newApiKey.provider,
 				created_at: new Date().toISOString(),
@@ -92,7 +84,6 @@
 			
 			newApiKey = { provider: "openai", key: "" };
 			
-			// Also reload in background to ensure sync
 			setTimeout(() => loadApiKeys(), 100);
 		} catch (error) {
 			console.error('Failed to add API key:', error);
@@ -113,11 +104,9 @@
 			showSuccess('API key deleted successfully');
 			deletingProvider = null;
 			
-			// Immediately update the store to trigger reactivity
 			const updatedKeys = apiKeys.filter(key => key.provider !== provider);
 			updateSetting('apiKeys', updatedKeys);
 			
-			// Also reload in background to ensure sync
 			setTimeout(() => loadApiKeys(), 100);
 		} catch (error) {
 			console.error('Failed to delete API key:', error);
@@ -453,7 +442,7 @@
 		animation: spin 1s linear infinite;
 	}
 
-	.loading-spinner-small {
+	.loading-spinnerfsmall {
 		width: 16px;
 		height: 16px;
 		border: 2px solid var(--border-primary);

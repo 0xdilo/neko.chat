@@ -207,55 +207,75 @@
 			intersectionObserver.observe(block);
 		});
 
-		// Listen for scroll events to update button positions
-		window.addEventListener('scroll', updateAllButtonPositions, { passive: true });
-		window.addEventListener('resize', updateAllButtonPositions, { passive: true });
+		// Add scroll listener for dynamic positioning
+		// Listen to both window and document scroll events
+		window.addEventListener('scroll', updateButtonPositions, { passive: true });
+		document.addEventListener('scroll', updateButtonPositions, { passive: true });
+		window.addEventListener('resize', updateButtonPositions, { passive: true });
+		
+		// Also find the scrolling container and listen to it
+		let scrollContainer = containerRef.closest('.chat-messages') || 
+							 containerRef.closest('.overflow-auto') || 
+							 containerRef.closest('[data-scroll]') ||
+							 containerRef.parentElement;
+		
+		
+		// Listen to all possible scroll containers
+		let currentEl = containerRef;
+		while (currentEl && currentEl !== document.body) {
+			const style = window.getComputedStyle(currentEl);
+			if (style.overflow === 'auto' || style.overflow === 'scroll' || 
+				style.overflowY === 'auto' || style.overflowY === 'scroll') {
+				currentEl.addEventListener('scroll', updateButtonPositions, { passive: true });
+			}
+			currentEl = currentEl.parentElement;
+		}
+		
+		// Add a test interval to see if positioning works
+		const testInterval = setInterval(() => {
+			updateButtonPositions();
+		}, 1000);
+		
+		// Store interval for cleanup
+		containerRef._testInterval = testInterval;
 	}
 
-	function updateAllButtonPositions() {
+	function updateButtonPositions() {
 		if (!containerRef) return;
 		
-		const codeBlocks = containerRef.querySelectorAll('.code-block-wrapper');
-		codeBlocks.forEach(codeBlock => {
-			const button = codeBlock.querySelector('.copy-button');
-			if (!button) return;
 
-			const codeBlockRect = codeBlock.getBoundingClientRect();
-			
-			// Check if any part of the code block is visible
-			const isVisible = codeBlockRect.top < window.innerHeight && codeBlockRect.bottom > 0;
-			
-			if (isVisible) {
-				// Simple approach: stick to viewport top when code block goes above it
-				const viewportTopMargin = 20; // Distance from top of viewport
-				let buttonTop;
-				
-				if (codeBlockRect.top < viewportTopMargin) {
-					// Code block has scrolled above viewport top
-					// Position button at viewport top, but relative to code block
-					buttonTop = viewportTopMargin - codeBlockRect.top;
+		const codeBlocks = containerRef.querySelectorAll('.code-block-wrapper');
+		
+		codeBlocks.forEach((codeBlock, index) => {
+			const button = codeBlock.querySelector('.copy-button');
+			if (!button) {
+				return;
+			}
+
+			const blockRect = codeBlock.getBoundingClientRect();
+			const containerRect = codeBlock.querySelector('.code-block-container').getBoundingClientRect();
+			const viewportHeight = window.innerHeight;
+			const buttonHeight = 32;
+			const margin = 12;
+
+			if (blockRect.bottom > 0 && blockRect.top < viewportHeight) {
+				let targetTop = margin;
+
+				if (containerRect.top < 0) {
+					const viewportTopInContainer = Math.abs(containerRect.top);
+					targetTop = viewportTopInContainer + margin;
 					
-					// Don't let button go below the bottom of the code block
-					const maxButtonTop = codeBlockRect.height - 50; // Leave room for button
-					buttonTop = Math.min(buttonTop, maxButtonTop);
-				} else {
-					// Code block is fully visible, use normal position
-					buttonTop = 12;
+					const maxTop = containerRect.height - buttonHeight - margin;
+					targetTop = Math.min(targetTop, maxTop);
+					
 				}
+
+				button.style.top = `${targetTop}px`;
+				button.classList.add('positioned');
 				
-				console.log('Positioning button:', {
-					codeBlockTop: codeBlockRect.top,
-					buttonTop,
-					viewportTopMargin
-				});
-				
-				button.style.position = 'absolute';
-				button.style.top = buttonTop + 'px';
-				button.style.right = '12px';
-				button.style.zIndex = '1000';
-				button.classList.add('viewport-visible');
 			} else {
-				button.classList.remove('viewport-visible');
+				button.style.top = `${margin}px`;
+				button.classList.remove('positioned');
 			}
 		});
 	}
@@ -265,7 +285,6 @@
 	});
 
 	onDestroy(() => {
-		// Clean up event listeners
 		copyButtons.forEach((handler, blockId) => {
 			const button = containerRef?.querySelector(`[data-block-id="${blockId}"]`);
 			if (button) {
@@ -274,18 +293,32 @@
 		});
 		copyButtons.clear();
 
-		// Clear timeouts
 		copiedStates.forEach(timeout => clearTimeout(timeout));
 		copiedStates.clear();
 
-		// Clean up intersection observer
 		if (intersectionObserver) {
 			intersectionObserver.disconnect();
 		}
 
-		// Clean up scroll and resize listeners
-		window.removeEventListener('scroll', updateAllButtonPositions);
-		window.removeEventListener('resize', updateAllButtonPositions);
+		window.removeEventListener('scroll', updateButtonPositions);
+		document.removeEventListener('scroll', updateButtonPositions);
+		window.removeEventListener('resize', updateButtonPositions);
+		
+		// Clean up container scroll listener if it exists
+		if (containerRef) {
+			// Clean up test interval
+			if (containerRef._testInterval) {
+				clearInterval(containerRef._testInterval);
+			}
+			
+			// Clean up scroll listeners on parent elements
+			let currentEl = containerRef;
+			while (currentEl && currentEl !== document.body) {
+				currentEl.removeEventListener('scroll', updateButtonPositions);
+				currentEl = currentEl.parentElement;
+			}
+		}
+
 	});
 
 	// Re-setup when content changes
@@ -294,7 +327,7 @@
 			if (containerRef) {
 				setupCopyButtons();
 				// Initial position update
-				setTimeout(updateAllButtonPositions, 100);
+				setTimeout(updateButtonPositions, 100);
 			}
 		});
 	}
@@ -391,6 +424,7 @@
 
 	:global(.markdown-content .code-block-container) {
 		position: relative;
+		overflow: visible;
 	}
 
 	:global(.markdown-content .code-block-wrapper pre) {
@@ -415,12 +449,13 @@
 		top: 0.75rem;
 		right: 0.75rem;
 		background-color: var(--bg-secondary);
+		border: 1px solid var(--border-primary);
 		border-radius: var(--radius-md);
 		padding: 0.5rem;
 		color: var(--text-secondary);
 		cursor: pointer;
 		opacity: 0;
-		transition: opacity 0.2s ease, transform 0.2s ease;
+		transition: opacity 0.2s ease, transform 0.15s ease;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -433,7 +468,7 @@
 
 	:global(.markdown-content .code-block-wrapper:hover .copy-button),
 	:global(.markdown-content .copy-button.visible),
-	:global(.markdown-content .copy-button.viewport-visible) {
+	:global(.markdown-content .copy-button.positioned) {
 		opacity: 1 !important;
 	}
 
@@ -484,48 +519,203 @@
 		font-weight: 600;
 	}
 
-	/* Syntax highlighting styles */
+	/* Syntax highlighting styles - Theme-aware */
 	:global(.hljs) {
 		background: transparent !important;
 	}
 
+	/* Kawaii colors for dark mode */
+	:global([data-theme="dark"] .hljs-comment),
+	:global([data-theme="dark"] .hljs-quote) {
+		color: #b8b8b8;
+		font-style: italic;
+	}
+
+	:global([data-theme="dark"] .hljs-keyword),
+	:global([data-theme="dark"] .hljs-selector-tag),
+	:global([data-theme="dark"] .hljs-literal) {
+		color: #f9a3ff;
+		font-weight: 600;
+	}
+
+	:global([data-theme="dark"] .hljs-string) {
+		color: #a3f9d3;
+	}
+
+	:global([data-theme="dark"] .hljs-number) {
+		color: #a3d9ff;
+	}
+
+	:global([data-theme="dark"] .hljs-built_in),
+	:global([data-theme="dark"] .hljs-class .hljs-title) {
+		color: #ffa3d9;
+	}
+
+	:global([data-theme="dark"] .hljs-function .hljs-title) {
+		color: #fff9a3;
+		font-weight: 600;
+	}
+
+	:global([data-theme="dark"] .hljs-tag) {
+		color: #f9a3ff;
+	}
+
+	:global([data-theme="dark"] .hljs-name) {
+		color: #d9a3ff;
+	}
+
+	:global([data-theme="dark"] .hljs-attribute) {
+		color: #a3fff9;
+	}
+
+	:global([data-theme="dark"] .hljs-variable) {
+		color: #e4e4e4;
+	}
+
+	:global([data-theme="dark"] .hljs-type) {
+		color: #ffa3d9;
+	}
+
+	:global([data-theme="dark"] .hljs-symbol),
+	:global([data-theme="dark"] .hljs-meta) {
+		color: #ffd9a3;
+	}
+
+	:global([data-theme="dark"] .hljs-operator) {
+		color: #ffb3a3;
+	}
+
+	:global([data-theme="dark"] .hljs-punctuation) {
+		color: #c8c8c8;
+	}
+
+	/* Kawaii colors for light mode */
+	:global([data-theme="light"] .hljs-comment),
+	:global([data-theme="light"] .hljs-quote) {
+		color: #777777;
+		font-style: italic;
+	}
+
+	:global([data-theme="light"] .hljs-keyword),
+	:global([data-theme="light"] .hljs-selector-tag),
+	:global([data-theme="light"] .hljs-literal) {
+		color: #e066ff;
+		font-weight: 600;
+	}
+
+	:global([data-theme="light"] .hljs-string) {
+		color: #33cc88;
+	}
+
+	:global([data-theme="light"] .hljs-number) {
+		color: #3399ff;
+	}
+
+	:global([data-theme="light"] .hljs-built_in),
+	:global([data-theme="light"] .hljs-class .hljs-title) {
+		color: #ff3399;
+	}
+
+	:global([data-theme="light"] .hljs-function .hljs-title) {
+		color: #cc9900;
+		font-weight: 600;
+	}
+
+	:global([data-theme="light"] .hljs-tag) {
+		color: #e066ff;
+	}
+
+	:global([data-theme="light"] .hljs-name) {
+		color: #9966ff;
+	}
+
+	:global([data-theme="light"] .hljs-attribute) {
+		color: #00ccaa;
+	}
+
+	:global([data-theme="light"] .hljs-variable) {
+		color: #333333;
+	}
+
+	:global([data-theme="light"] .hljs-type) {
+		color: #ff3399;
+	}
+
+	:global([data-theme="light"] .hljs-symbol),
+	:global([data-theme="light"] .hljs-meta) {
+		color: #ff9933;
+	}
+
+	:global([data-theme="light"] .hljs-operator) {
+		color: #ff6633;
+	}
+
+	:global([data-theme="light"] .hljs-punctuation) {
+		color: #666666;
+	}
+
+	/* Default theme-aware colors for all other themes */
 	:global(.hljs-comment),
 	:global(.hljs-quote) {
-		color: #6a9955;
+		color: var(--text-muted);
+		font-style: italic;
 	}
 
 	:global(.hljs-keyword),
 	:global(.hljs-selector-tag),
 	:global(.hljs-literal) {
-		color: #569cd6;
+		color: var(--accent-primary);
+		font-weight: 600;
 	}
 
 	:global(.hljs-string) {
-		color: #ce9178;
+		color: var(--status-success);
 	}
 
 	:global(.hljs-number) {
-		color: #b5cea8;
+		color: var(--status-info);
 	}
 
 	:global(.hljs-built_in),
 	:global(.hljs-class .hljs-title) {
-		color: #4ec9b0;
+		color: var(--accent-secondary);
 	}
 
 	:global(.hljs-function .hljs-title) {
-		color: #dcdcaa;
+		color: var(--status-warning);
+		font-weight: 600;
 	}
 
 	:global(.hljs-tag) {
-		color: #569cd6;
+		color: var(--accent-primary);
 	}
 
 	:global(.hljs-name) {
-		color: #9cdcfe;
+		color: var(--text-secondary);
 	}
 
 	:global(.hljs-attribute) {
-		color: #92c5f8;
+		color: var(--text-tertiary);
+	}
+
+	:global(.hljs-variable) {
+		color: var(--text-primary);
+	}
+
+	:global(.hljs-type) {
+		color: var(--accent-secondary);
+	}
+
+	:global(.hljs-symbol),
+	:global(.hljs-meta) {
+		color: var(--text-tertiary);
+	}
+
+	:global(.hljs-operator) {
+		color: var(--text-secondary);
+	}
+
+	:global(.hljs-punctuation) {
+		color: var(--text-secondary);
 	}
 </style>

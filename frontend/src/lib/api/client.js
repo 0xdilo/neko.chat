@@ -90,31 +90,22 @@ class APIClient {
       headers: this.getHeaders(options.headers),
       ...options,
     };
-    
+
     // Extract custom options
     const { noRedirectOn401, ...fetchOptions } = config;
-
-    console.log("API Request:", {
-      method: config.method || "GET",
-      url,
-      headers: config.headers,
-      body: config.body,
-    });
 
     // Add timeout
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     fetchOptions.signal = controller.signal;
-    
+
     // Store request options for error handling
     this.currentRequest = { noRedirectOn401 };
 
     try {
       const response = await fetch(url, fetchOptions);
-      console.log("API Response status:", response.status);
       clearTimeout(timeoutId);
       const result = await this.handleResponse(response);
-      console.log("API Response data:", result);
       return result;
     } catch (error) {
       clearTimeout(timeoutId);
@@ -212,9 +203,7 @@ export async function withErrorHandling(
   errorMessage = "Operation failed",
 ) {
   try {
-    console.log('withErrorHandling: Calling API function...');
     const result = await apiCall();
-    console.log('withErrorHandling: API call successful, result:', result);
     return result;
   } catch (error) {
     console.error("withErrorHandling: API Error:", error);
@@ -278,4 +267,3 @@ export const endpoints = {
 };
 
 export default api;
-

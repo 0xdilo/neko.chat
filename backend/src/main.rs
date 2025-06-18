@@ -54,6 +54,8 @@ async fn main() {
         .with(tracing_subscriber::fmt::layer())
         .init();
 
+    print_neko();
+
     let config = Config::from_env();
 
     let db_pool = SqlitePoolOptions::new()
@@ -279,7 +281,6 @@ async fn main() {
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
         ]);
-
     let app = routes::create_router(app_state).layer(cors);
 
     let addr_str = std::env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
@@ -287,4 +288,33 @@ async fn main() {
     tracing::info!("server listening on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+fn print_neko() {
+    let ascii_art = "
+        ████                      ████        
+      ██    ██                  ██    ██      
+      ██    ██                  ██    ██      
+    ██        ██████████████████        ██    
+    ██        ▓▓▓▓  ▓▓▓▓▓▓  ▓▓▓▓        ██    
+    ██        ▓▓▓▓  ▓▓▓▓▓▓  ▓▓▓▓        ██    
+  ██                                      ██  
+  ██  ██    ████              ████    ██  ██  
+  ██    ██  ████      ██      ████  ██    ██  
+██    ██            ██████            ██    ██
+██                                          ██
+██                                          ██
+██▓▓▓▓                                  ▓▓▓▓██
+██▓▓▓▓                                  ▓▓▓▓██
+██                                          ██
+
+███╗   ██╗    ███████╗    ██╗  ██╗     ██████╗ 
+████╗  ██║    ██╔════╝    ██║ ██╔╝    ██╔═══██╗
+██╔██╗ ██║    █████╗      █████╔╝     ██║   ██║
+██║╚██╗██║    ██╔══╝      ██╔═██╗     ██║   ██║
+██║ ╚████║    ███████╗    ██║  ██╗    ╚██████╔╝
+╚═╝  ╚═══╝    ╚══════╝    ╚═╝  ╚═╝     ╚═════╝ .chat
+
+  ";
+    println!("{}", ascii_art)
 }

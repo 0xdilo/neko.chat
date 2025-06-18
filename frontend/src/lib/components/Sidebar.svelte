@@ -49,31 +49,22 @@
 
 	// Listen for sidebar toggle events to enable navigation mode
 	function handleSidebarToggle() {
-		console.log('Sidebar toggle event received, current collapsed state:', $sidebarCollapsed);
-		// Since the event is fired before the state changes, we need to check the opposite
 		if ($sidebarCollapsed) {
-			// Sidebar is currently collapsed, will be opened
-			console.log('Activating navigation mode');
 			isNavigationMode = true;
 			selectedIndex = 0;
 		} else {
-			// Sidebar is currently open, will be collapsed
-			console.log('Deactivating navigation mode');
 			isNavigationMode = false;
 		}
 	}
 
 	// Watch for sidebar state changes directly
 	$: {
-		console.log('Sidebar state changed - collapsed:', $sidebarCollapsed);
 		if (!$sidebarCollapsed) {
 			// Sidebar just opened
-			console.log('Sidebar opened, activating navigation mode');
 			isNavigationMode = true;
 			selectedIndex = 0;
 		} else {
 			// Sidebar just closed
-			console.log('Sidebar closed, deactivating navigation mode');
 			isNavigationMode = false;
 		}
 	}
@@ -226,7 +217,6 @@
 		// Check both the database flag and legacy title prefix for backward compatibility
 		const isBranchFromFlag = chat.isBranch || chat.is_branch || false;
 		console.log("penis")
-		console.log(isBranchFromFlag)
 		const isBranchFromTitle = chat.title.startsWith("Branch from: ");
 		
 		return {
