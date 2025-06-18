@@ -26,7 +26,19 @@ install_deps() {
   (cd backend && cargo build --release)
 }
 
+deps_installed() {
+  [[ -d frontend/node_modules ]] && [[ -f backend/target/release/$(basename "$(pwd)") ]]
+}
+
+ensure_deps() {
+  if ! deps_installed; then
+    echo "--- dependencies missing, running install ---"
+    install_deps
+  fi
+}
+
 start_dev() {
+  ensure_deps
   echo "--- starting backend (api) [dev] ---"
   (cd backend && cargo run) &
   pids+=($!)
@@ -42,6 +54,7 @@ start_dev() {
 }
 
 start_preview() {
+  ensure_deps
   echo "--- building frontend for production ---"
   (cd frontend && bun run build)
 

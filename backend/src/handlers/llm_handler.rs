@@ -194,8 +194,7 @@ pub async fn send_message(
         }
     }
 
-    let mut conversation = prepare_conversation(pool, &chat).await?;
-    conversation.push(json!({"role": "user", "content": &payload.content}));
+    let conversation = prepare_conversation(pool, &chat).await?;
 
     let api_key = get_decrypted_key(
         pool,
@@ -287,10 +286,7 @@ pub async fn stream_message(
 
     // --- 2. prepare for llm call ---
     let conversation = match prepare_conversation(&pool, &chat).await {
-        Ok(mut c) => {
-            c.push(json!({"role": "user", "content": &payload.content}));
-            c
-        }
+        Ok(c) => c,
         Err(e) => return e.into_response(),
     };
 
