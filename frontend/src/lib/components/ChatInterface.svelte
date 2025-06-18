@@ -356,12 +356,13 @@ function autoResize(node, _val) {
 		};
 	}
 
-	async function sendUserMessage() {
+	async function sendUserMessageWithContent(content, clearInput = false) {
 		const currentChatId = $activeChat;
-		if (!messageInput.trim() || loadingChats.has(currentChatId) || !hasApiKeys) return;
+		if (!content.trim() || loadingChats.has(currentChatId) || !hasApiKeys) return;
 
-		const content = messageInput.trim();
-		messageInput = "";
+		if (clearInput) {
+			messageInput = "";
+		}
 		
 		// Mark this specific chat as loading
 		loadingChats.add(currentChatId);
@@ -375,11 +376,14 @@ function autoResize(node, _val) {
 		}
 
 		try {
-			if (currentSelectedModels.length > 1) {
+			// Store intended models before any chat operations that might reset currentSelectedModels
+			const intendedModels = [...currentSelectedModels];
+			
+			if (intendedModels.length > 1) {
 				rightSidebarCollapsed.set(false);
 				sidebarCollapsed.set(true);
 
-				const modelConfigs = currentSelectedModels.map((modelId) => {
+				const modelConfigs = intendedModels.map((modelId) => {
 					const model = userEnabledModels.find((m) => m.model_id === modelId);
 					if (model) {
 						return {
@@ -403,11 +407,11 @@ function autoResize(node, _val) {
 				await sendParallelMessage(content, modelConfigs);
 			} else {
 				// Pass the selected model to sendMessage for single model usage
-				if (currentSelectedModels.length === 0) {
+				if (intendedModels.length === 0) {
 					// No model selected, use default
 					await sendMessage(content, { webSearch: webAccessEnabled });
 				} else {
-					const selectedModelId = currentSelectedModels[0];
+					const selectedModelId = intendedModels[0];
 					const selectedModel = userEnabledModels.find((m) => m.model_id === selectedModelId);
 					
 					const modelOptions = selectedModel ? {
@@ -436,6 +440,17 @@ function autoResize(node, _val) {
 			loadingChats = loadingChats; // Trigger reactivity
 			isFirstMessage = false;
 		}
+	}
+
+	async function sendUserMessage() {
+		const content = messageInput.trim();
+		if (!content) return;
+		await sendUserMessageWithContent(content, true);
+	}
+
+	// Handler for welcome message suggestions
+	async function handleWelcomeMessage(content) {
+		await sendUserMessageWithContent(content, false);
 	}
 
 
@@ -705,6 +720,7 @@ async function handleKeydown(e) {
 			const lastMessage = messagesToInclude[messagesToInclude.length - 1];
 
 			const defaultModel = getFirstEnabledModel();
+			const branchPointMessage = $activeChatMessages[branchingMessageIndex];
 			const chatData = {
 				title: $currentChat?.title || "Chat",
 				system_prompt:
@@ -712,6 +728,8 @@ async function handleKeydown(e) {
 				provider: selectedModel?.provider || $currentChat?.provider || defaultModel.provider,
 				model: selectedModel?.model || $currentChat?.model || defaultModel.model,
 				is_branch: true,
+				parent_chat_id: $currentChat?.id,
+				branch_point_message_id: branchPointMessage?.id,
 			};
 
 			closeBranchModal();
@@ -925,7 +943,7 @@ async function handleKeydown(e) {
 		on:scroll={handleScroll}
 	>
 		{#if messages.length === 0 && !isFirstMessage}
-			<WelcomeMessage />
+			<WelcomeMessage onSendMessage={handleWelcomeMessage} />
 		{:else}
 			<div class="messages">
 				{#each messages as message (message.id)}

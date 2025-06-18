@@ -18,7 +18,9 @@ export const chatAPI = {
         system_prompt: chatData.system_prompt,
         provider: chatData.provider,
         model: chatData.model,
-        is_branch: chatData.is_branch || false
+        is_branch: chatData.is_branch || false,
+        parent_chat_id: chatData.parent_chat_id,
+        branch_point_message_id: chatData.branch_point_message_id
       }),
       'Failed to create chat.'
     );

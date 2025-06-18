@@ -1,7 +1,8 @@
 <script>
   import { userName, apiKeys, apiKeysLoaded } from '$lib/stores/settings.js';
-  import { sendMessage } from '$lib/stores/chats.js';
   import ASCIIArt from './ASCIIArt.svelte';
+
+  export let onSendMessage = null;
 
   $: name = $userName;
   $: userApiKeys = $apiKeys;
@@ -17,7 +18,14 @@
 
   async function handlePromptClick(prompt) {
     try {
-      await sendMessage(prompt);
+      if (onSendMessage) {
+        // Use the provided handler from ChatInterface (parallel-aware)
+        await onSendMessage(prompt);
+      } else {
+        // Fallback to direct store method (single model only)
+        const { sendMessage } = await import('$lib/stores/chats.js');
+        await sendMessage(prompt);
+      }
     } catch (error) {
       console.error('failed to send prompt:', error);
     }
