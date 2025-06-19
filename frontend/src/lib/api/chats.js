@@ -70,6 +70,15 @@ export const chatAPI = {
 
   // Stream a message to a chat
   async streamMessage(chatId, message, options = {}) {
+    let reader = null;
+    let abortController = new AbortController();
+    let accumulatedContent = '';
+    
+    // Store abort controller for cancellation
+    if (options.onStart) {
+      options.onStart(abortController);
+    }
+    
     try {
       const requestBody = {
         content: message
@@ -82,20 +91,30 @@ export const chatAPI = {
       const response = await fetch(`/api/chats/${chatId}/stream`, {
         method: 'POST',
         headers: api.getHeaders(),
-        body: JSON.stringify(requestBody)
+        body: JSON.stringify(requestBody),
+        signal: abortController.signal
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        let errorMessage = `HTTP ${response.status}`;
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (e) {
+          if (errorText) errorMessage = errorText;
+        }
+        
+        throw new Error(errorMessage);
       }
 
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       if (!reader) {
         throw new Error('Response body is not readable');
       }
 
       const decoder = new TextDecoder();
-      let accumulatedContent = '';
 
       try {
         while (true) {
@@ -106,6 +125,13 @@ export const chatAPI = {
           }
 
           const chunk = decoder.decode(value, { stream: true });
+          
+          // Check for error messages in the chunk
+          if (chunk.startsWith('ERROR:')) {
+            const errorMsg = chunk.substring(6).trim();
+            throw new Error(errorMsg || 'Streaming error occurred');
+          }
+          
           accumulatedContent += chunk;
           
           // Call the onChunk callback with only the new chunk
@@ -121,10 +147,18 @@ export const chatAPI = {
 
         return accumulatedContent;
       } finally {
-        reader.releaseLock();
+        if (reader) {
+          reader.releaseLock();
+        }
       }
     } catch (error) {
       console.error('Streaming error:', error);
+      
+      if (error.name === 'AbortError') {
+        // Don't call onComplete for aborted streams, let the UI handle the partial content
+        return accumulatedContent || '';
+      }
+      
       if (options.onError) {
         options.onError(error);
       }
@@ -134,23 +168,42 @@ export const chatAPI = {
 
   // Regenerate response (for message editing - doesn't create new user message)
   async regenerateResponse(chatId, options = {}) {
+    let reader = null;
+    let abortController = new AbortController();
+    let accumulatedContent = '';
+    
+    // Store abort controller for cancellation
+    if (options.onStart) {
+      options.onStart(abortController);
+    }
+    
     try {
       const response = await fetch(`/api/chats/${chatId}/regenerate`, {
         method: 'POST',
-        headers: api.getHeaders()
+        headers: api.getHeaders(),
+        signal: abortController.signal
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = await response.text();
+        let errorMessage = `HTTP ${response.status}`;
+        
+        try {
+          const errorData = JSON.parse(errorText);
+          errorMessage = errorData.message || errorData.error || errorMessage;
+        } catch (e) {
+          if (errorText) errorMessage = errorText;
+        }
+        
+        throw new Error(errorMessage);
       }
 
-      const reader = response.body?.getReader();
+      reader = response.body?.getReader();
       if (!reader) {
         throw new Error('Response body is not readable');
       }
 
       const decoder = new TextDecoder();
-      let accumulatedContent = '';
 
       try {
         while (true) {
@@ -161,6 +214,13 @@ export const chatAPI = {
           }
 
           const chunk = decoder.decode(value, { stream: true });
+          
+          // Check for error messages in the chunk
+          if (chunk.startsWith('ERROR:')) {
+            const errorMsg = chunk.substring(6).trim();
+            throw new Error(errorMsg || 'Streaming error occurred');
+          }
+          
           accumulatedContent += chunk;
           
           // Call the onChunk callback with only the new chunk
@@ -176,10 +236,19 @@ export const chatAPI = {
 
         return accumulatedContent;
       } finally {
-        reader.releaseLock();
+        if (reader) {
+          reader.releaseLock();
+        }
       }
     } catch (error) {
       console.error('Regenerate streaming error:', error);
+      
+      if (error.name === 'AbortError') {
+        console.log('Regenerate stream was cancelled by user');
+        // Don't call onComplete for aborted streams, let the UI handle the partial content
+        return accumulatedContent || '';
+      }
+      
       if (options.onError) {
         options.onError(error);
       }

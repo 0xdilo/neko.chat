@@ -24,15 +24,19 @@ fn generate_chat_title(content: &str) -> String {
     if content.is_empty() {
         return "New Chat".to_string();
     }
-    
+
     // Clean the content and get first meaningful part
-    let clean_content = content.trim().chars().collect::<String>().replace(char::is_whitespace, " ");
-    
+    let clean_content = content
+        .trim()
+        .chars()
+        .collect::<String>()
+        .replace(char::is_whitespace, " ");
+
     // If it's very short, use as-is
     if clean_content.len() <= 50 {
         return clean_content;
     }
-    
+
     // Try to find a good breaking point at sentence end
     if let Some(pos) = clean_content.find(&['.', '!', '?'][..]) {
         let sentence = &clean_content[..pos];
@@ -40,11 +44,11 @@ fn generate_chat_title(content: &str) -> String {
             return sentence.trim().to_string();
         }
     }
-    
+
     // Find a good word boundary within 50 characters
     let words: Vec<&str> = clean_content.split_whitespace().collect();
     let mut title = String::new();
-    
+
     for word in words {
         if title.len() + word.len() + 1 > 50 {
             break;
@@ -54,7 +58,7 @@ fn generate_chat_title(content: &str) -> String {
         }
         title.push_str(word);
     }
-    
+
     if title.is_empty() {
         // Fallback: truncate at 47 chars and add ellipsis
         let truncated: String = clean_content.chars().take(47).collect();
@@ -238,7 +242,7 @@ pub async fn stream_message(
     // --- 1. Fast validation and prep (minimize DB queries before streaming) ---
     // Validate chat ownership first with minimal query
     let chat_exists = match sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM chats WHERE id = $1 AND user_id = $2"
+        "SELECT COUNT(*) FROM chats WHERE id = $1 AND user_id = $2",
     )
     .bind(&chat_id)
     .bind(&user_id)
@@ -255,7 +259,7 @@ pub async fn stream_message(
 
     // Get essential chat info for streaming
     let (chat_provider, chat_model) = match sqlx::query_as::<_, (String, String)>(
-        "SELECT provider, model FROM chats WHERE id = $1"
+        "SELECT provider, model FROM chats WHERE id = $1",
     )
     .bind(&chat_id)
     .fetch_one(&pool)
@@ -276,7 +280,11 @@ pub async fn stream_message(
     let llm_client = match get_llm_client(&chat_provider, &api_key) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("Failed to create LLM client for provider {}: {:?}", &chat_provider, e);
+            tracing::error!(
+                "Failed to create LLM client for provider {}: {:?}",
+                &chat_provider,
+                e
+            );
             return e.into_response();
         }
     };
@@ -285,14 +293,14 @@ pub async fn stream_message(
     let pool_clone = pool.clone();
     let chat_id_clone = chat_id.clone();
     let payload_content = payload.content.clone();
-    let user_id_clone = user_id.clone();
+    let _user_id_clone = user_id.clone();
     let tx_clone = tx.clone();
 
     // --- 3. create the stream ---
     let response_stream = stream! {
         // Insert user message and prepare conversation in parallel with streaming start
         let user_message_id = Uuid::new_v4().to_string();
-        
+
         // Start user message insert
         let user_msg_future = async {
             sqlx::query_as::<_, Message>(
@@ -376,7 +384,10 @@ pub async fn stream_message(
             match llm_client.chat_stream_with_web_search(&chat_model, conversation).await {
                 Ok(s) => s,
                 Err(e) => {
-                    yield Err(e);
+                    // Send error as "ERROR: message" format in the stream
+                    let error_message = format!("ERROR: {}", e);
+                    tracing::error!("LLM web search streaming setup error: {}", e);
+                    yield Ok::<String, AppError>(error_message);
                     return;
                 }
             }
@@ -384,7 +395,10 @@ pub async fn stream_message(
             match llm_client.chat_stream(&chat_model, conversation).await {
                 Ok(s) => s,
                 Err(e) => {
-                    yield Err(e);
+                    // Send error as "ERROR: message" format in the stream
+                    let error_message = format!("ERROR: {}", e);
+                    tracing::error!("LLM streaming setup error: {}", e);
+                    yield Ok::<String, AppError>(error_message);
                     return;
                 }
             }
@@ -397,34 +411,88 @@ pub async fn stream_message(
                     yield Ok(chunk);
                 }
                 Err(e) => {
-                    yield Err(e);
+                    // Send error as "ERROR: message" format in the stream instead of yielding error
+                    let error_message = format!("ERROR: {}", e);
+                    tracing::error!("LLM streaming error: {}", e);
+                    yield Ok::<String, AppError>(error_message);
                     break;
                 }
             }
         }
+    };
 
-        // --- 4. Save response asynchronously after streaming ---
-        let final_content = full_response.lock().await.clone();
-        if !final_content.is_empty() {
-            let save_pool = pool_clone.clone();
-            let save_chat_id = chat_id_clone.clone();
-            let save_tx = tx_clone.clone();
-            tokio::spawn(async move {
-                if let Ok(assistant_message) = sqlx::query_as::<_, Message>(
-                    "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
-                )
-                .bind(Uuid::new_v4().to_string())
-                .bind(&save_chat_id)
-                .bind(final_content)
-                .fetch_one(&save_pool)
-                .await {
-                    let _ = save_tx.send(assistant_message);
+    // Wrap the stream with a Drop guard to ensure content is saved on disconnect.
+    let monitored_stream = {
+        let saver_pool = pool;
+        let saver_tx = app_state.tx.clone();
+
+        stream! {
+            // This guard saves the accumulated content when it's dropped.
+            // This happens when the stream finishes gracefully OR is cancelled (e.g., client disconnects).
+            struct ContentSaver {
+                content: String,
+                has_streamed: bool,
+                pool: sqlx::SqlitePool,
+                chat_id: String,
+                tx: tokio::sync::broadcast::Sender<Message>,
+            }
+
+            impl Drop for ContentSaver {
+                fn drop(&mut self) {
+                    if self.has_streamed && !self.content.trim().is_empty() {
+                        // Clone the data needed for the async task.
+                        let content_to_save = self.content.clone();
+                        let pool = self.pool.clone();
+                        let chat_id = self.chat_id.clone();
+                        let tx = self.tx.clone();
+
+                        tokio::spawn(async move {
+                            tracing::info!("ContentSaver: Saving content on drop (length: {})", content_to_save.len());
+                            match sqlx::query_as::<_, Message>(
+                                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
+                            )
+                            .bind(Uuid::new_v4().to_string())
+                            .bind(&chat_id)
+                            .bind(&content_to_save)
+                            .fetch_one(&pool)
+                            .await {
+                                Ok(assistant_message) => {
+                                    tracing::info!("ContentSaver: Successfully saved partial message with ID: {}", assistant_message.id);
+                                    let _ = tx.send(assistant_message);
+                                }
+                                Err(e) => {
+                                    tracing::error!("ContentSaver: Failed to save partial message: {:?}", e);
+                                }
+                            }
+                        });
+                    } else {
+                        tracing::info!("ContentSaver: Not saving on drop. has_streamed: {}, content_empty: {}", self.has_streamed, self.content.trim().is_empty());
+                    }
                 }
-            });
+            }
+
+            let mut saver = ContentSaver {
+                content: String::new(),
+                has_streamed: false,
+                pool: saver_pool,
+                chat_id: chat_id,
+                tx: saver_tx,
+            };
+
+            let mut stream = std::pin::pin!(response_stream);
+            while let Some(result) = stream.next().await {
+                if let Ok(chunk) = &result {
+                    if !chunk.starts_with("ERROR:") {
+                        saver.content.push_str(chunk);
+                        saver.has_streamed = true;
+                    }
+                }
+                yield result;
+            }
         }
     };
 
-    let body_stream = response_stream.map_err(axum::Error::new);
+    let body_stream = monitored_stream.map_err(axum::Error::new);
     Response::new(Body::from_stream(body_stream))
 }
 
@@ -465,7 +533,11 @@ pub async fn regenerate_response(
     let llm_client = match get_llm_client(&chat.provider, &api_key) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("Failed to create LLM client for provider {}: {:?}", &chat.provider, e);
+            tracing::error!(
+                "Failed to create LLM client for provider {}: {:?}",
+                &chat.provider,
+                e
+            );
             return e.into_response();
         }
     };
@@ -476,7 +548,10 @@ pub async fn regenerate_response(
         let mut llm_stream = match llm_client.chat_stream(&chat.model, conversation).await {
             Ok(s) => s,
             Err(e) => {
-                yield Err(e);
+                // Send error as "ERROR: message" format in the stream
+                let error_message = format!("ERROR: {}", e);
+                tracing::error!("LLM regenerate streaming setup error: {}", e);
+                yield Ok::<String, AppError>(error_message);
                 return;
             }
         };
@@ -488,31 +563,85 @@ pub async fn regenerate_response(
                     yield Ok(chunk);
                 }
                 Err(e) => {
-                    yield Err(e);
+                    // Send error as "ERROR: message" format in the stream instead of yielding error
+                    let error_message = format!("ERROR: {}", e);
+                    tracing::error!("LLM regenerate streaming error: {}", e);
+                    yield Ok::<String, AppError>(error_message);
                     break;
                 }
             }
         }
+    };
 
-        // --- 4. after stream finishes, save the full response ---
-        let final_content = full_response.lock().await.clone();
-        if !final_content.is_empty() {
-            let assistant_message = sqlx::query_as::<_, Message>(
-                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(&chat_id)
-            .bind(final_content)
-            .fetch_one(&pool)
-            .await;
+    // Wrap the stream with a Drop guard to ensure content is saved on disconnect.
+    let monitored_stream = {
+        let saver_pool = pool.clone();
+        let saver_tx = app_state.tx.clone();
 
-            if let Ok(msg) = assistant_message {
-                let _ = tx.send(msg);
+        stream! {
+            struct ContentSaver {
+                content: String,
+                has_streamed: bool,
+                pool: sqlx::SqlitePool,
+                chat_id: String,
+                tx: tokio::sync::broadcast::Sender<Message>,
+            }
+
+            impl Drop for ContentSaver {
+                fn drop(&mut self) {
+                    if self.has_streamed && !self.content.trim().is_empty() {
+                        let content_to_save = self.content.clone();
+                        let pool = self.pool.clone();
+                        let chat_id = self.chat_id.clone();
+                        let tx = self.tx.clone();
+
+                        tokio::spawn(async move {
+                            tracing::info!("Regenerate ContentSaver: Saving content on drop (length: {})", content_to_save.len());
+                            match sqlx::query_as::<_, Message>(
+                                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
+                            )
+                            .bind(Uuid::new_v4().to_string())
+                            .bind(&chat_id)
+                            .bind(&content_to_save)
+                            .fetch_one(&pool)
+                            .await {
+                                Ok(assistant_message) => {
+                                    tracing::info!("Regenerate ContentSaver: Successfully saved partial message with ID: {}", assistant_message.id);
+                                    let _ = tx.send(assistant_message);
+                                }
+                                Err(e) => {
+                                    tracing::error!("Regenerate ContentSaver: Failed to save partial message: {:?}", e);
+                                }
+                            }
+                        });
+                    } else {
+                        tracing::info!("Regenerate ContentSaver: Not saving on drop. has_streamed: {}, content_empty: {}", self.has_streamed, self.content.trim().is_empty());
+                    }
+                }
+            }
+
+            let mut saver = ContentSaver {
+                content: String::new(),
+                has_streamed: false,
+                pool: saver_pool,
+                chat_id: chat_id,
+                tx: saver_tx,
+            };
+
+            let mut stream = std::pin::pin!(response_stream);
+            while let Some(result) = stream.next().await {
+                if let Ok(chunk) = &result {
+                    if !chunk.starts_with("ERROR:") {
+                        saver.content.push_str(chunk);
+                        saver.has_streamed = true;
+                    }
+                }
+                yield result;
             }
         }
     };
 
-    let body_stream = response_stream.map_err(axum::Error::new);
+    let body_stream = monitored_stream.map_err(axum::Error::new);
     Response::new(Body::from_stream(body_stream))
 }
 
@@ -570,15 +699,16 @@ pub async fn parallel_llm_query(
     // Create branch chats for each model
     for model_config in payload.models {
         let branch_chat_id = Uuid::new_v4().to_string();
-        
+
         // Generate a better title for branch chats
-        let base_title = if parent_chat.title == "New Chat" || parent_chat.title.contains("New Chat") {
-            // Generate title from message content if parent has generic title
-            generate_chat_title(&payload.content)
-        } else {
-            parent_chat.title.clone()
-        };
-        
+        let base_title =
+            if parent_chat.title == "New Chat" || parent_chat.title.contains("New Chat") {
+                // Generate title from message content if parent has generic title
+                generate_chat_title(&payload.content)
+            } else {
+                parent_chat.title.clone()
+            };
+
         let branch_title = format!("{} ({})", base_title, model_config.model);
 
         let branch_chat = sqlx::query_as::<_, Chat>(

@@ -12,6 +12,7 @@
 		PanelRight,
 		ChevronDown,
 		Trash2,
+		Square,
 	} from "lucide-svelte";
 	import MarkdownRenderer from "./MarkdownRenderer.svelte";
 	import WelcomeMessage from "./WelcomeMessage.svelte";
@@ -56,6 +57,7 @@
 	let modelSelectorButton;
 	// let isLoading = false; // Replaced with per-chat loading state
 	let loadingChats = new Set(); // Track which chats are currently loading
+	let abortControllers = new Map(); // Track abort controllers for cancellation
 	let selectedModelIndex = 0;
 	let editingMessageId = null;
 	let editingContent = "";
@@ -378,6 +380,7 @@ function autoResize(node, _val) {
 		try {
 			// Store intended models before any chat operations that might reset currentSelectedModels
 			const intendedModels = [...currentSelectedModels];
+			let result;
 			
 			if (intendedModels.length > 1) {
 				rightSidebarCollapsed.set(false);
@@ -404,12 +407,21 @@ function autoResize(node, _val) {
 					return { provider: defaultModel.provider, model: modelId };
 				});
 
-				await sendParallelMessage(content, modelConfigs);
+				result = await sendParallelMessage(content, modelConfigs, {
+					onStart: (controller) => {
+						abortControllers.set(currentChatId, controller);
+					}
+				});
 			} else {
 				// Pass the selected model to sendMessage for single model usage
 				if (intendedModels.length === 0) {
 					// No model selected, use default
-					await sendMessage(content, { webSearch: webAccessEnabled });
+					result = await sendMessage(content, { 
+						webSearch: webAccessEnabled,
+						onStart: (controller) => {
+							abortControllers.set(currentChatId, controller);
+						}
+					});
 				} else {
 					const selectedModelId = intendedModels[0];
 					const selectedModel = userEnabledModels.find((m) => m.model_id === selectedModelId);
@@ -417,26 +429,36 @@ function autoResize(node, _val) {
 					const modelOptions = selectedModel ? {
 						provider: selectedModel.provider,
 						model: selectedModel.model_id,
-						webSearch: webAccessEnabled
+						webSearch: webAccessEnabled,
+						onStart: (controller) => {
+							abortControllers.set(currentChatId, controller);
+						}
 					} : {
-						webSearch: webAccessEnabled
+						webSearch: webAccessEnabled,
+						onStart: (controller) => {
+							abortControllers.set(currentChatId, controller);
+						}
 					};
 					
-					await sendMessage(content, modelOptions);
+					result = await sendMessage(content, modelOptions);
 				}
 			}
 
-			// only auto-scroll if user was at bottom when they sent message
-			if (wasAtBottom) {
+			// only auto-scroll if user was at bottom when they sent message (unless aborted)
+			if (wasAtBottom && !result?.aborted) {
 				await tick();
 				scrollToBottom();
 			}
 		} catch (error) {
 			console.error("Failed to send message:", error);
-			showError("Failed to send message");
+			// Don't show error if it was just an aborted stream
+			if (error.name !== 'AbortError') {
+				showError("Failed to send message");
+			}
 		} finally {
 			// Remove this chat from loading state
 			loadingChats.delete(currentChatId);
+			abortControllers.delete(currentChatId);
 			loadingChats = loadingChats; // Trigger reactivity
 			isFirstMessage = false;
 		}
@@ -538,6 +560,9 @@ async function handleKeydown(e) {
 
 				try {
 					await chatAPI.regenerateResponse($currentChat.id, {
+						onStart: (controller) => {
+							abortControllers.set($currentChat.id, controller);
+						},
 						onChunk: (chunk, accumulatedContent) => {
 							updateMessageInActiveChat(assistantMessageId, {
 								content: accumulatedContent,
@@ -548,6 +573,7 @@ async function handleKeydown(e) {
 							updateMessageInActiveChat(assistantMessageId, {
 								streaming: false,
 							});
+							abortControllers.delete($currentChat.id);
 
 							try {
 								const messages = await chatAPI.getMessages($currentChat.id);
@@ -558,6 +584,7 @@ async function handleKeydown(e) {
 						},
 						onError: (error) => {
 							console.error("Streaming error:", error);
+							abortControllers.delete($currentChat.id);
 							updateMessageInActiveChat(assistantMessageId, {
 								content: "Error: Failed to get response",
 								streaming: false,
@@ -629,6 +656,9 @@ async function handleKeydown(e) {
 			addMessageToActiveChat(assistantMessage);
 
 			await chatAPI.regenerateResponse($currentChat.id, {
+				onStart: (controller) => {
+					abortControllers.set($currentChat.id, controller);
+				},
 				onChunk: (chunk, accumulatedContent) => {
 					updateMessageInActiveChat(assistantMessageId, {
 						content: accumulatedContent,
@@ -639,6 +669,7 @@ async function handleKeydown(e) {
 					updateMessageInActiveChat(assistantMessageId, {
 						streaming: false,
 					});
+					abortControllers.delete($currentChat.id);
 
 					try {
 						const messages = await chatAPI.getMessages($currentChat.id);
@@ -649,6 +680,7 @@ async function handleKeydown(e) {
 				},
 				onError: (error) => {
 					console.error("Streaming error:", error);
+					abortControllers.delete($currentChat.id);
 					updateMessageInActiveChat(assistantMessageId, {
 						content: "Error: Failed to get response",
 						streaming: false,
@@ -782,6 +814,17 @@ async function handleKeydown(e) {
 			await deleteMessage(messageId);
 		} catch (error) {
 			console.error("Failed to delete message:", error);
+		}
+	};
+
+	const stopGeneration = () => {
+		const currentChatId = $activeChat;
+		const controller = abortControllers.get(currentChatId);
+		if (controller) {
+			controller.abort();
+			abortControllers.delete(currentChatId);
+			loadingChats.delete(currentChatId);
+			loadingChats = loadingChats; // Trigger reactivity
 		}
 	};
 
@@ -1138,18 +1181,23 @@ on:keydown={handleKeydown}
 				disabled={!hasApiKeys}
 			></textarea>
 
-			<button
-				on:click={sendUserMessage}
-				disabled={!messageInput.trim() || currentChatLoading || !hasApiKeys}
-				class="input-action-button"
-				class:loading={currentChatLoading}
-			>
-				{#if currentChatLoading}
-					<div class="loading-spinner-small"></div>
-				{:else}
+			{#if currentChatLoading}
+				<button
+					on:click={stopGeneration}
+					class="input-action-button stop-button"
+					title="Stop generation"
+				>
+					<Square size={20} />
+				</button>
+			{:else}
+				<button
+					on:click={sendUserMessage}
+					disabled={!messageInput.trim() || !hasApiKeys}
+					class="input-action-button"
+				>
 					<Send size={20} />
-				{/if}
-			</button>
+				</button>
+			{/if}
 		</div>
 	</div>
 
@@ -1746,6 +1794,7 @@ on:keydown={handleKeydown}
 		opacity: 0.7;
 		cursor: not-allowed;
 	}
+
 
 	.cursor-blink {
 		animation: blink 1s infinite;

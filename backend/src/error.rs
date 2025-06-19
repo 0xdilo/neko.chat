@@ -15,6 +15,11 @@ pub enum AppError {
     DatabaseError(sqlx::Error),
     JwtError(jsonwebtoken::errors::Error),
     PasswordHashError(bcrypt::BcryptError),
+    LLMProviderError {
+        provider: String,
+        status_code: Option<u16>,
+        message: String,
+    },
 }
 
 impl fmt::Display for AppError {
@@ -27,6 +32,13 @@ impl fmt::Display for AppError {
             AppError::DatabaseError(_) => "Database operation failed",
             AppError::JwtError(_) => "Invalid token",
             AppError::PasswordHashError(_) => "Could not process request",
+            AppError::LLMProviderError { provider, status_code, message } => {
+                if let Some(code) = status_code {
+                    return write!(f, "{} (HTTP {}): {}", provider, code, message);
+                } else {
+                    return write!(f, "{}: {}", provider, message);
+                }
+            }
         };
         write!(f, "{}", error_message)
     }
@@ -52,6 +64,14 @@ impl IntoResponse for AppError {
             AppError::PasswordHashError(ref e) => {
                 tracing::error!("Password hash error: {}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+            }
+            AppError::LLMProviderError { ref provider, status_code, ref message } => {
+                tracing::error!("LLM Provider error - {}: {}", provider, message);
+                // For HTTP responses, convert to appropriate status code
+                let response_status = status_code
+                    .and_then(|code| StatusCode::from_u16(code).ok())
+                    .unwrap_or(StatusCode::BAD_GATEWAY);
+                (response_status, self.to_string())
             }
         };
 

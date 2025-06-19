@@ -364,6 +364,7 @@ export async function sendMessage(content, options = {}) {
     // Stream message response
     await chatAPI.streamMessage(currentChatId, content, {
       webSearch: options.webSearch,
+      onStart: options.onStart,
       onChunk: (chunk, accumulatedContent) => {
         // Update global streaming state
         streamingMessages.update((messages) => ({
@@ -439,7 +440,34 @@ export async function sendMessage(content, options = {}) {
     return { success: true };
   } catch (err) {
     console.error("Failed to send message:", err);
-    // Update the assistant message with error
+    
+    // If stream was aborted by user, just mark as completed without error
+    if (err.name === 'AbortError') {
+      // The message should already have the partial content from onChunk calls
+      // Just mark it as not streaming anymore
+      updateMessageInActiveChat(assistantMessageId, {
+        streaming: false,
+      });
+      
+      // Clean up global streaming state
+      streamingChats.update((set) => {
+        const newSet = new Set(set);
+        newSet.delete(currentChatId);
+        return newSet;
+      });
+
+      streamingMessages.update((messages) => {
+        const updated = { ...messages };
+        delete updated[currentChatId];
+        return updated;
+      });
+      
+      // Don't reload messages from database on abort - keep the UI state with partial content
+      // Return success to indicate no error should be shown
+      return { success: true, aborted: true };
+    }
+    
+    // For other errors, show error message
     updateMessageInActiveChat(assistantMessageId, {
       content: "Error: Failed to send message",
       streaming: false,
@@ -451,7 +479,7 @@ export async function sendMessage(content, options = {}) {
 }
 
 // Send parallel message to multiple models
-export async function sendParallelMessage(content, models) {
+export async function sendParallelMessage(content, models, options = {}) {
   let currentChatId = await new Promise((resolve) => {
     activeChat.subscribe((chatId) => resolve(chatId))();
   });

@@ -9,8 +9,8 @@ export const llmAPI = {
         api.post(endpoints.llm.chat, {
           messages,
           model: options.model || "gpt-4",
-          temperature: options.temperature || 0.7,
-          maxTokens: options.maxTokens || 2048,
+          temperature: options.temperature ?? 0.7,
+          maxTokens: options.maxTokens || 8192,
           systemPrompt: options.systemPrompt,
           stream: false,
         }),
@@ -24,8 +24,8 @@ export const llmAPI = {
       const reader = await api.stream(endpoints.llm.stream, {
         messages,
         model: options.model || "gpt-4",
-        temperature: options.temperature || 0.7,
-        maxTokens: options.maxTokens || 2048,
+        temperature: options.temperature ?? 0.7,
+        maxTokens: options.maxTokens || 8192,
         systemPrompt: options.systemPrompt,
         stream: true,
       });
@@ -160,7 +160,7 @@ export const llmAPI = {
           messages,
           functions,
           model: options.model || "gpt-4",
-          temperature: options.temperature || 0.7,
+          temperature: options.temperature ?? 0.7,
         }),
       "Failed to execute function call.",
     );
@@ -174,7 +174,7 @@ export const llmAPI = {
           image: imageData,
           prompt,
           model: options.model || "gpt-4-vision-preview",
-          maxTokens: options.maxTokens || 1000,
+          maxTokens: options.maxTokens || 4096,
         }),
       "Failed to analyze image.",
     );
@@ -188,7 +188,7 @@ export const llmAPI = {
           code,
           language,
           model: options.model || "gpt-4",
-          temperature: options.temperature || 0.1,
+          temperature: options.temperature ?? 0.1,
         }),
       "Failed to complete code.",
     );
@@ -277,4 +277,3 @@ export const streamUtils = {
     };
   },
 };
-
