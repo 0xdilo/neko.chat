@@ -108,9 +108,9 @@ export const chatAPI = {
           const chunk = decoder.decode(value, { stream: true });
           accumulatedContent += chunk;
           
-          // Call the onChunk callback with accumulated content
-          if (options.onChunk) {
-            options.onChunk(accumulatedContent);
+          // Call the onChunk callback with only the new chunk
+          if (options.onChunk && chunk) {
+            options.onChunk(chunk, accumulatedContent);
           }
         }
 
@@ -163,9 +163,9 @@ export const chatAPI = {
           const chunk = decoder.decode(value, { stream: true });
           accumulatedContent += chunk;
           
-          // Call the onChunk callback with accumulated content
-          if (options.onChunk) {
-            options.onChunk(accumulatedContent);
+          // Call the onChunk callback with only the new chunk
+          if (options.onChunk && chunk) {
+            options.onChunk(chunk, accumulatedContent);
           }
         }
 

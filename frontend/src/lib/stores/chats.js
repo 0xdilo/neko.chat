@@ -364,7 +364,7 @@ export async function sendMessage(content, options = {}) {
     // Stream message response
     await chatAPI.streamMessage(currentChatId, content, {
       webSearch: options.webSearch,
-      onChunk: (accumulatedContent) => {
+      onChunk: (chunk, accumulatedContent) => {
         // Update global streaming state
         streamingMessages.update((messages) => ({
           ...messages,
@@ -590,7 +590,7 @@ async function startBranchStreaming(chatId, content) {
 
     await chatAPI.streamMessage(chatId, content, {
       webSearch: false, // Parallel messages use individual model capabilities
-      onChunk: (accumulatedContent) => {
+      onChunk: (chunk, accumulatedContent) => {
         // Update the global streaming state
         streamingMessages.update((messages) => ({
           ...messages,

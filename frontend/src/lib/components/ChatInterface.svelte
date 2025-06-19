@@ -538,7 +538,7 @@ async function handleKeydown(e) {
 
 				try {
 					await chatAPI.regenerateResponse($currentChat.id, {
-						onChunk: (accumulatedContent) => {
+						onChunk: (chunk, accumulatedContent) => {
 							updateMessageInActiveChat(assistantMessageId, {
 								content: accumulatedContent,
 								streaming: true,
@@ -629,7 +629,7 @@ async function handleKeydown(e) {
 			addMessageToActiveChat(assistantMessage);
 
 			await chatAPI.regenerateResponse($currentChat.id, {
-				onChunk: (accumulatedContent) => {
+				onChunk: (chunk, accumulatedContent) => {
 					updateMessageInActiveChat(assistantMessageId, {
 						content: accumulatedContent,
 						streaming: true,

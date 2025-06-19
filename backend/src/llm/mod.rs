@@ -440,6 +440,8 @@ impl LLMClient for OpenAIClient {
 
         let stream = async_stream::stream! {
             let mut inner_stream = byte_stream;
+            let mut buffer = Vec::new();
+            
             while let Some(chunk_result) = inner_stream.next().await {
                 let chunk = match chunk_result {
                     Ok(c) => c,
@@ -450,18 +452,35 @@ impl LLMClient for OpenAIClient {
                     }
                 };
 
-                for line in chunk.split(|&b| b == b'\n') {
+                buffer.extend_from_slice(&chunk);
+                
+                // Process complete lines from buffer
+                let mut start = 0;
+                while let Some(newline_pos) = buffer[start..].iter().position(|&b| b == b'\n') {
+                    let line_end = start + newline_pos;
+                    let line = &buffer[start..line_end];
+                    
                     if line.starts_with(b"data: ") {
                         let data = &line[6..];
                         if data == b"[DONE]" {
-                            break;
+                            return;
                         }
                         if let Ok(parsed) = serde_json::from_slice::<OpenAiStreamResponse>(data) {
                             if let Some(content) = parsed.choices.get(0).and_then(|c| c.delta.content.as_ref()) {
-                                yield Ok(content.clone());
+                                if !content.is_empty() {
+                                    yield Ok(content.clone());
+                                }
                             }
                         }
                     }
+                    start = line_end + 1;
+                }
+                
+                // Keep remaining incomplete data in buffer
+                if start < buffer.len() {
+                    buffer.drain(..start);
+                } else {
+                    buffer.clear();
                 }
             }
         };

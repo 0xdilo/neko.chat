@@ -235,83 +235,145 @@ pub async fn stream_message(
     let tx = app_state.tx.clone();
     let encryption_key = app_state.config.encryption_key.clone();
 
-    // --- 1. initial db operations & validation ---
-    let chat: Chat = match sqlx::query_as("SELECT * FROM chats WHERE id = $1 AND user_id = $2")
-        .bind(&chat_id)
-        .bind(&user_id)
-        .fetch_one(&pool)
-        .await
-    {
-        Ok(c) => c,
-        Err(_) => return AppError::NotFound.into_response(),
-    };
-
-    let user_message = match sqlx::query_as::<_, Message>(
-        "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'user', $3) RETURNING *",
+    // --- 1. Fast validation and prep (minimize DB queries before streaming) ---
+    // Validate chat ownership first with minimal query
+    let chat_exists = match sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM chats WHERE id = $1 AND user_id = $2"
     )
-    .bind(Uuid::new_v4().to_string())
     .bind(&chat_id)
-    .bind(&payload.content)
+    .bind(&user_id)
     .fetch_one(&pool)
     .await
     {
-        Ok(m) => m,
-        Err(e) => return AppError::DatabaseError(e).into_response(),
+        Ok(count) => count > 0,
+        Err(_) => false,
     };
 
-    let _ = tx.send(user_message.clone());
-
-    // Update chat title if this is the first user message and chat has generic title
-    if chat.title == "New Chat" || chat.title.contains("New Chat") {
-        // Check if this is the first user message
-        let existing_user_messages = match sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM messages WHERE chat_id = $1 AND role = 'user'",
-        )
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(count) => count,
-            Err(_) => 1, // Assume it's the first if query fails
-        };
-
-        if existing_user_messages == 1 {
-            // This is the first user message, update the title
-            let new_title = generate_chat_title(&payload.content);
-            let _ = sqlx::query("UPDATE chats SET title = $1 WHERE id = $2")
-                .bind(&new_title)
-                .bind(&chat_id)
-                .execute(&pool)
-                .await;
-        }
+    if !chat_exists {
+        return AppError::NotFound.into_response();
     }
 
-    // --- 2. prepare for llm call ---
-    let conversation = match prepare_conversation(&pool, &chat).await {
-        Ok(c) => c,
-        Err(e) => return e.into_response(),
+    // Get essential chat info for streaming
+    let (chat_provider, chat_model) = match sqlx::query_as::<_, (String, String)>(
+        "SELECT provider, model FROM chats WHERE id = $1"
+    )
+    .bind(&chat_id)
+    .fetch_one(&pool)
+    .await
+    {
+        Ok((provider, model)) => (provider, model),
+        Err(_) => return AppError::NotFound.into_response(),
     };
 
-    let api_key = match get_decrypted_key(&pool, &user_id, &chat.provider, &encryption_key).await {
+    // Get API key early
+    let api_key = match get_decrypted_key(&pool, &user_id, &chat_provider, &encryption_key).await {
         Ok(k) => k,
         Err(e) => return e.into_response(),
     };
 
-    tracing::info!("Using provider: {}, model: {}", &chat.provider, &chat.model);
-    let llm_client = match get_llm_client(&chat.provider, &api_key) {
+    // Create LLM client early
+    tracing::info!("Using provider: {}, model: {}", &chat_provider, &chat_model);
+    let llm_client = match get_llm_client(&chat_provider, &api_key) {
         Ok(c) => c,
         Err(e) => {
-            tracing::error!("Failed to create LLM client for provider {}: {:?}", &chat.provider, e);
+            tracing::error!("Failed to create LLM client for provider {}: {:?}", &chat_provider, e);
             return e.into_response();
         }
     };
 
+    // --- 2. Async DB operations and stream preparation ---
+    let pool_clone = pool.clone();
+    let chat_id_clone = chat_id.clone();
+    let payload_content = payload.content.clone();
+    let user_id_clone = user_id.clone();
+    let tx_clone = tx.clone();
+
     // --- 3. create the stream ---
     let response_stream = stream! {
+        // Insert user message and prepare conversation in parallel with streaming start
+        let user_message_id = Uuid::new_v4().to_string();
+        
+        // Start user message insert
+        let user_msg_future = async {
+            sqlx::query_as::<_, Message>(
+                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'user', $3) RETURNING *",
+            )
+            .bind(&user_message_id)
+            .bind(&chat_id_clone)
+            .bind(&payload_content)
+            .fetch_one(&pool_clone)
+            .await
+        };
+
+        // Get full chat details for conversation prep
+        let chat_future = async {
+            sqlx::query_as::<_, Chat>("SELECT * FROM chats WHERE id = $1")
+                .bind(&chat_id_clone)
+                .fetch_one(&pool_clone)
+                .await
+        };
+
+        // Execute both operations
+        let (user_msg_result, chat_result) = tokio::join!(user_msg_future, chat_future);
+
+        let user_message = match user_msg_result {
+            Ok(m) => m,
+            Err(e) => {
+                yield Err(AppError::DatabaseError(e));
+                return;
+            }
+        };
+
+        let chat = match chat_result {
+            Ok(c) => c,
+            Err(_) => {
+                yield Err(AppError::NotFound);
+                return;
+            }
+        };
+
+        // Send user message to websocket
+        let _ = tx_clone.send(user_message.clone());
+
+        // Prepare conversation
+        let conversation = match prepare_conversation(&pool_clone, &chat).await {
+            Ok(c) => c,
+            Err(e) => {
+                yield Err(e);
+                return;
+            }
+        };
+
+        // Handle title update asynchronously (don't block streaming)
+        if chat.title == "New Chat" || chat.title.contains("New Chat") {
+            let title_pool = pool_clone.clone();
+            let title_chat_id = chat_id_clone.clone();
+            let title_content = payload_content.clone();
+            tokio::spawn(async move {
+                let existing_count = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM messages WHERE chat_id = $1 AND role = 'user'",
+                )
+                .bind(&title_chat_id)
+                .fetch_one(&title_pool)
+                .await
+                .unwrap_or(1);
+
+                if existing_count == 1 {
+                    let new_title = generate_chat_title(&title_content);
+                    let _ = sqlx::query("UPDATE chats SET title = $1 WHERE id = $2")
+                        .bind(&new_title)
+                        .bind(&title_chat_id)
+                        .execute(&title_pool)
+                        .await;
+                }
+            });
+        }
+
+        // Start LLM streaming
         let full_response = Arc::new(tokio::sync::Mutex::new(String::new()));
         let use_web_search = payload.web_search.unwrap_or(false) && llm_client.supports_web_search();
         let mut llm_stream = if use_web_search {
-            match llm_client.chat_stream_with_web_search(&chat.model, conversation).await {
+            match llm_client.chat_stream_with_web_search(&chat_model, conversation).await {
                 Ok(s) => s,
                 Err(e) => {
                     yield Err(e);
@@ -319,7 +381,7 @@ pub async fn stream_message(
                 }
             }
         } else {
-            match llm_client.chat_stream(&chat.model, conversation).await {
+            match llm_client.chat_stream(&chat_model, conversation).await {
                 Ok(s) => s,
                 Err(e) => {
                     yield Err(e);
@@ -341,21 +403,24 @@ pub async fn stream_message(
             }
         }
 
-        // --- 4. after stream finishes, save the full response ---
+        // --- 4. Save response asynchronously after streaming ---
         let final_content = full_response.lock().await.clone();
         if !final_content.is_empty() {
-            let assistant_message = sqlx::query_as::<_, Message>(
-                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
-            )
-            .bind(Uuid::new_v4().to_string())
-            .bind(&chat_id)
-            .bind(final_content)
-            .fetch_one(&pool)
-            .await;
-
-            if let Ok(msg) = assistant_message {
-                let _ = tx.send(msg);
-            }
+            let save_pool = pool_clone.clone();
+            let save_chat_id = chat_id_clone.clone();
+            let save_tx = tx_clone.clone();
+            tokio::spawn(async move {
+                if let Ok(assistant_message) = sqlx::query_as::<_, Message>(
+                    "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'assistant', $3) RETURNING *",
+                )
+                .bind(Uuid::new_v4().to_string())
+                .bind(&save_chat_id)
+                .bind(final_content)
+                .fetch_one(&save_pool)
+                .await {
+                    let _ = save_tx.send(assistant_message);
+                }
+            });
         }
     };
 
