@@ -3,7 +3,6 @@
 	import { appearance, updateAppearance } from "$lib/stores/settings.js";
 	import { CheckCircle2, Sun, Moon } from "lucide-svelte";
 
-	// Available themes - popular themes including nvim-inspired ones
 	const availableThemes = [
 		{
 			id: themes.dark,
@@ -108,8 +107,6 @@
 		updateAppearance({ theme: themeId });
 	}
 
-	// Check if current theme is a basic dark/light theme
-	$: isBasicTheme = $themeStore === themes.dark || $themeStore === themes.light;
 </script>
 
 <div class="section-header">
@@ -119,7 +116,6 @@
 			Choose from popular themes including nvim-inspired color schemes.
 		</p>
 	</div>
-	{#if isBasicTheme}
 		<button
 			on:click={() => {
 				const newTheme = $themeStore === themes.dark ? themes.light : themes.dark;
@@ -134,7 +130,6 @@
 				<Moon size={18} />
 			{/if}
 		</button>
-	{/if}
 </div>
 
 <div class="theme-grid">

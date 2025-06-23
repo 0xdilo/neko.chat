@@ -32,10 +32,8 @@ const defaultSettings = {
   },
 };
 
-// Settings store
 export const settings = writable(defaultSettings);
 
-// Individual setting stores for easier component binding
 export const userName = writable(defaultSettings.userName);
 export const apiKeys = writable(defaultSettings.apiKeys);
 export const apiKeysLoaded = writable(false);
@@ -46,7 +44,6 @@ export const appearance = writable({
   messageAnimation: defaultSettings.messageAnimation,
 });
 
-// Update a specific setting
 export function updateSetting(key, value) {
   settings.update((current) => {
     const updated = { ...current, [key]: value };

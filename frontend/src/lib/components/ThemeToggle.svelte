@@ -6,11 +6,8 @@
     theme.toggle();
   }
 
-  // Only show toggle for basic dark/light themes
-  $: isBasicTheme = $theme === themes.dark || $theme === themes.light;
 </script>
 
-{#if isBasicTheme}
   <button
     on:click={toggleTheme}
     class="theme-toggle"
@@ -23,7 +20,6 @@
       <Moon size={18} />
     {/if}
   </button>
-{/if}
 
 <style>
   .theme-toggle {

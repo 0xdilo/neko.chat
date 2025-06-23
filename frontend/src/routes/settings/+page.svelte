@@ -59,20 +59,7 @@
 	// Use real store data instead of mock data
 	$: apiKeys = $apiKeysStore;
 
-	let systemPrompts = [
-		{
-			id: 1,
-			name: "Default Assistant",
-			prompt: "You are a helpful AI assistant.",
-			active: true,
-		},
-		{
-			id: 2,
-			name: "Code Helper",
-			prompt: "You are an expert software developer. Help with coding tasks.",
-			active: false,
-		},
-	];
+	let systemPrompts = [];
 
 	let keyboardShortcuts = [
 		{ id: 1, action: "New Chat", keys: ["Ctrl", "O"] },
@@ -91,19 +78,7 @@
 		updateGeneral: (e) => {
 			triggerSave();
 		},
-		updateApiKeys: (e) => {
-			apiKeys = e.detail;
-			triggerSave();
-		},
 		updateModels: (e) => {
-			triggerSave();
-		},
-		updateSystemPrompts: (e) => {
-			systemPrompts = e.detail;
-			triggerSave();
-		},
-		updateAppearance: (e) => {
-			appearanceSettings = e.detail;
 			triggerSave();
 		},
 		navigateToApiKeys: (e) => {
@@ -122,9 +97,6 @@
 		}, 800);
 	}
 
-	function saveAllSettings() {
-		triggerSave();
-	}
 </script>
 
 <svelte:head>
@@ -148,10 +120,7 @@
 				{keyboardShortcuts}
 				{appearanceSettings}
 				on:updateGeneral={handlers.updateGeneral}
-				on:updateApiKeys={handlers.updateApiKeys}
 				on:updateModels={handlers.updateModels}
-				on:updateSystemPrompts={handlers.updateSystemPrompts}
-				on:updateAppearance={handlers.updateAppearance}
 				on:navigateToApiKeys={handlers.navigateToApiKeys}
 			/>
 		</div>

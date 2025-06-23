@@ -1,15 +1,10 @@
 import { browser } from "$app/environment";
 import { showError, showWarning } from "$lib/stores/app.js";
 
-// API configuration
 const API_BASE_URL = browser
-  ? window.location.origin.replace(":5173", ":8080") // Development proxy
+  ? window.location.origin.replace(":5173", ":8080")
   : "http://localhost:8080";
 
-// Request timeout in milliseconds
-const REQUEST_TIMEOUT = 30000;
-
-// Create API client with authentication and error handling
 class APIClient {
   constructor(baseURL = API_BASE_URL) {
     this.baseURL = baseURL;
@@ -18,13 +13,11 @@ class APIClient {
     };
   }
 
-  // Get auth token from localStorage
   getAuthToken() {
     if (!browser) return null;
     return localStorage.getItem("neko-auth-token");
   }
 
-  // Create headers with authentication
   getHeaders(customHeaders = {}) {
     const headers = { ...this.defaultHeaders, ...customHeaders };
 
@@ -36,7 +29,6 @@ class APIClient {
     return headers;
   }
 
-  // Handle API response
   async handleResponse(response) {
     const contentType = response.headers.get("content-type");
     const isJson = contentType && contentType.includes("application/json");
@@ -51,10 +43,8 @@ class APIClient {
     if (!response.ok) {
       const errorMessage = isJson ? data.message || data.error : data;
 
-      // Handle specific error codes
       switch (response.status) {
         case 401:
-          // Unauthorized - redirect to login (unless disabled)
           if (browser && !this.currentRequest?.noRedirectOn401) {
             localStorage.removeItem("neko-auth-token");
             window.location.href = "/auth";
@@ -83,7 +73,6 @@ class APIClient {
     return data;
   }
 
-  // Make HTTP request with timeout and error handling
   async request(endpoint, options = {}) {
     const url = `${this.baseURL}${endpoint}`;
     const config = {
@@ -91,31 +80,24 @@ class APIClient {
       ...options,
     };
 
-    // Extract custom options
     const { noRedirectOn401, ...fetchOptions } = config;
 
-    // Add timeout
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT);
     fetchOptions.signal = controller.signal;
 
-    // Store request options for error handling
     this.currentRequest = { noRedirectOn401 };
 
     try {
       const response = await fetch(url, fetchOptions);
-      clearTimeout(timeoutId);
       const result = await this.handleResponse(response);
       return result;
     } catch (error) {
-      clearTimeout(timeoutId);
       console.error("API Request failed:", error);
 
       if (error.name === "AbortError") {
         throw new Error("Request timeout");
       }
 
-      // Network error
       if (!navigator.onLine) {
         showWarning("You are offline. Please check your connection.");
         throw new Error("Network unavailable");
@@ -125,7 +107,6 @@ class APIClient {
     }
   }
 
-  // HTTP methods
   async get(endpoint, params = {}) {
     const url = new URL(endpoint, this.baseURL);
     Object.entries(params).forEach(([key, value]) => {
@@ -164,7 +145,6 @@ class APIClient {
     });
   }
 
-  // Upload file
   async upload(endpoint, formData) {
     return this.request(endpoint, {
       method: "POST",
@@ -173,7 +153,6 @@ class APIClient {
     });
   }
 
-  // Streaming request for chat completions
   async stream(endpoint, data = {}) {
     const url = `${this.baseURL}${endpoint}`;
     const response = await fetch(url, {
@@ -194,10 +173,8 @@ class APIClient {
   }
 }
 
-// Create and export API client instance
 export const api = new APIClient();
 
-// Convenience methods for common patterns
 export async function withErrorHandling(
   apiCall,
   errorMessage = "Operation failed",
@@ -212,14 +189,12 @@ export async function withErrorHandling(
   }
 }
 
-// API endpoints
 export const endpoints = {
   // Authentication
   auth: {
     login: "/api/auth/login",
     logout: "/api/auth/logout",
     register: "/api/auth/register",
-    refresh: "/api/auth/refresh",
     profile: "/api/auth/profile",
   },
 
@@ -238,7 +213,6 @@ export const endpoints = {
     chat: "/api/llm/chat",
     stream: "/api/llm/stream",
     models: "/api/llm/models",
-    usage: "/api/llm/usage",
   },
 
   // Settings

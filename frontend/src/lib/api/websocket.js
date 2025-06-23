@@ -1,12 +1,10 @@
 import { browser } from "$app/environment";
 import { writable } from "svelte/store";
 
-// WebSocket connection state
 export const wsConnected = writable(false);
 export const wsConnecting = writable(false);
 export const wsError = writable(null);
 
-// WebSocket message types
 export const WS_MESSAGE_TYPES = {
   // Chat messages
   CHAT_MESSAGE: "chat_message",
@@ -375,4 +373,3 @@ if (browser && typeof window !== "undefined") {
     websocket.connect();
   }
 }
-

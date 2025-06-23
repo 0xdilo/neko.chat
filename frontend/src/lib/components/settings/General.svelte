@@ -6,7 +6,6 @@
 
 	let nameValue = '';
 
-	// Subscribe to userName store
 	userName.subscribe(value => {
 		nameValue = value;
 	});
