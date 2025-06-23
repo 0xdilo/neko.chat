@@ -169,14 +169,21 @@
       </button>
     </div>
 
-    <svg
-      class="graph-svg"
-      viewBox="-400 -200 800 600"
-      bind:this={svgElement}
+    <!-- svelte-ignore a11y-no-noninteractive-element-interactions -->
+    <div
+      class="graph-container"
       on:mousedown={handleMouseDown}
       on:wheel={handleWheel}
+      role="img"
+      aria-label="Chat graph visualization"
       style="cursor: {isDragging ? 'grabbing' : 'grab'}"
     >
+      <svg
+        class="graph-svg"
+        viewBox="-400 -200 800 600"
+        bind:this={svgElement}
+        style="pointer-events: auto;"
+      >
       <g
         transform="translate({transform.x}, {transform.y}) scale({transform.scale})"
       >
@@ -205,6 +212,12 @@
           <g
             class="node-group"
             on:click={() => handleNodeClick(node)}
+            on:keydown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                handleNodeClick(node);
+              }
+            }}
             role="button"
             tabindex="0"
             style="cursor: pointer"
@@ -244,7 +257,8 @@
           </g>
         {/each}
       </g>
-    </svg>
+      </svg>
+    </div>
   {:else}
     <div class="empty-state">
       <div class="empty-icon">💬</div>
@@ -262,6 +276,12 @@
     overflow: hidden;
     position: relative;
     user-select: none;
+  }
+
+  .graph-container {
+    width: 100%;
+    height: 100%;
+    position: relative;
   }
 
   .graph-controls {

@@ -578,10 +578,6 @@
 		color: var(--text-secondary);
 	}
 
-	.search-icon {
-		color: inherit;
-		flex-shrink: 0;
-	}
 
 	.chat-list {
 		flex: 1;

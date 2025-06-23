@@ -385,16 +385,6 @@ import { loadEnabledModels } from '$lib/stores/models.js';
 		border-color: var(--border-secondary);
 	}
 
-	.control-button.primary {
-		background-color: var(--accent-primary);
-		border-color: var(--accent-primary);
-		color: white;
-	}
-
-	.control-button.primary:hover:not(:disabled) {
-		background-color: var(--accent-primary-dark, var(--accent-primary));
-		opacity: 0.9;
-	}
 
 	.control-button:disabled {
 		opacity: 0.5;
@@ -457,31 +447,6 @@ import { loadEnabledModels } from '$lib/stores/models.js';
 		color: var(--text-secondary);
 		font-weight: 400;
 		margin-left: var(--spacing-md);
-	}
-
-	.provider-actions {
-		display: flex;
-		gap: var(--spacing-sm);
-	}
-
-	.action-button {
-		display: flex;
-		align-items: center;
-		gap: var(--spacing-xs);
-		padding: var(--spacing-xs) var(--spacing-sm);
-		background-color: var(--bg-tertiary);
-		border: 1px solid var(--border-secondary);
-		border-radius: var(--radius-sm);
-		color: var(--text-secondary);
-		font-size: var(--font-size-xs);
-		cursor: pointer;
-		transition: all 150ms ease-in-out;
-	}
-
-	.action-button:hover {
-		background-color: var(--accent-primary-muted);
-		color: var(--accent-primary);
-		border-color: var(--accent-primary);
 	}
 
 	.models-grid {
@@ -601,15 +566,6 @@ import { loadEnabledModels } from '$lib/stores/models.js';
 	.link-button:hover {
 		background-color: var(--accent-primary-dark, var(--accent-primary));
 		opacity: 0.9;
-	}
-
-	.spinner {
-		width: 16px;
-		height: 16px;
-		border: 2px solid transparent;
-		border-top: 2px solid currentColor;
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
 	}
 
 	:global(.spinning) {

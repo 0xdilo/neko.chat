@@ -101,35 +101,6 @@
     }
   }
 
-  /* Dark mode enhancements */
-  [data-theme="dark"] .auth-container {
-    box-shadow: 
-      var(--shadow-lg),
-      inset 0 1px 0 rgba(255, 255, 255, 0.05);
-  }
-
-  [data-theme="dark"] .left-column {
-    background: linear-gradient(
-      135deg,
-      #1a1a1a 0%,
-      #2a2a2a 100%
-    );
-  }
-
-  /* Light mode enhancements */
-  [data-theme="light"] .auth-container {
-    box-shadow: 
-      var(--shadow-lg),
-      inset 0 1px 0 rgba(255, 255, 255, 0.8);
-  }
-
-  [data-theme="light"] .left-column {
-    background: linear-gradient(
-      135deg,
-      #f8f8f8 0%,
-      #e8e8e8 100%
-    );
-  }
 
   /* Subtle animation */
   .auth-container {

@@ -504,7 +504,6 @@ pub async fn regenerate_response(
 ) -> impl IntoResponse {
     let user_id = claims.sub;
     let pool = app_state.db_pool.clone();
-    let tx = app_state.tx.clone();
     let encryption_key = app_state.config.encryption_key.clone();
 
     // --- 1. initial db operations & validation ---

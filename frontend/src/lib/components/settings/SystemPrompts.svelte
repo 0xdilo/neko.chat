@@ -203,7 +203,8 @@
 		<div class="prompts-list">
 			{#if isLoading && systemPrompts.length === 0}
 				<div class="loading-state">
-					<div class="loading-spinner" />
+					<div class="loading-spinner" >
+					</div>
 					<p>loading system prompts...</p>
 				</div>
 			{:else}
@@ -303,7 +304,8 @@
 						id="prompt-content"
 						bind:value={promptBuffer.prompt}
 						placeholder="you are an expert..."
-					/>
+					>
+					</textarea>
 				</div>
 				<div class="editor-actions">
 					<button class="cancel-btn" on:click={handleCancel}>
@@ -401,9 +403,6 @@
 		align-items: center;
 		gap: var(--spacing-sm);
 		flex-shrink: 0;
-	}
-	.active-icon {
-		color: var(--status-success);
 	}
 	.delete-icon {
 		visibility: hidden;
@@ -516,7 +515,7 @@
 	.prompt-content {
 		background-color: var(--bg-primary);
 		border: 1px solid var(--border-primary);
-		border-radius: var(--radius-lg)
+		border-radius: var(--radius-lg);
 		padding: var(--spacing-lg);
 		white-space: pre-wrap;
 		font-family: var(--font-family-mono);

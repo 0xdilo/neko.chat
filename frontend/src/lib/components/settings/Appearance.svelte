@@ -245,7 +245,4 @@
 		color: var(--text-secondary);
 		line-height: var(--line-height-tight);
 	}
-	.active-check {
-		color: var(--accent-primary);
-	}
 </style>

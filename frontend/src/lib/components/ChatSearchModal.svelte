@@ -3,7 +3,6 @@
 	import { Search, Clock, MessageSquare, Hash } from 'lucide-svelte';
 	import { chats, setActiveChat } from '$lib/stores/chats.js';
 	import { chatAPI } from '$lib/api/chats.js';
-	import Fuse from 'fuse.js';
 	
 	export let isOpen = false;
 	
@@ -13,7 +12,6 @@
 	let searchTerm = '';
 	let selectedIndex = 0;
 	let modal;
-	let fuse;
 	let chatMessages = new Map();
 	let isSearching = false;
 	
@@ -139,11 +137,11 @@
 </script>
 
 {#if isOpen}
-	<div class="modal-backdrop" bind:this={modal} on:click={handleModalClick}>
+	<div class="modal-backdrop" bind:this={modal} on:click={handleModalClick} on:keydown role="dialog" tabindex="0">
 		<div class="modal-content">
 			<div class="search-header">
 				<div class="search-container">
-					<Search class="search-icon" size={16} />
+					<Search size={16} style="position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--text-tertiary); pointer-events: none; z-index: 2;" />
 					<input
 						bind:this={searchInput}
 						bind:value={searchTerm}
@@ -169,7 +167,7 @@
 								on:click={() => selectChat(chat)}
 							>
 								<div class="result-content">
-									<MessageSquare size={16} class="chat-icon" />
+									<MessageSquare size={16} style="color: var(--text-tertiary); flex-shrink: 0;" />
 									<div class="chat-info">
 										<div class="chat-title">{chat.title}</div>
 										<div class="chat-meta">{chat.model}</div>
@@ -195,7 +193,7 @@
 									on:click={() => selectChat(chat)}
 								>
 									<div class="result-content">
-										<MessageSquare size={16} class="chat-icon" />
+										<MessageSquare size={16} style="color: var(--text-tertiary); flex-shrink: 0;" />
 										<div class="chat-info">
 											<div class="chat-title">
 												{@html highlightMatch(chat.title, searchTerm)}
@@ -203,7 +201,7 @@
 													<span class="match-indicator">in messages</span>
 												{/if}
 											</div>
-											<div class="chat-meta">{chat.model}e</div>
+											<div class="chat-meta">{chat.model}</div>
 										</div>
 									</div>
 								</button>
@@ -271,15 +269,6 @@
 		align-items: center;
 	}
 	
-	.search-icon {
-		position: absolute;
-		left: 12px;
-		top: 50%;
-		transform: translateY(-50%);
-		color: var(--text-tertiary);
-		pointer-events: none;
-		z-index: 2;
-	}
 	
 	.search-input {
 		width: 100%;
@@ -300,7 +289,7 @@
 		box-shadow: 0 !important;
 	}
 
-input:focus, textarea:focus, select:focus {
+input:focus {
     outline: none;
     border-color: var(--border-focus);
     box-shadow: 0 0 0 2px rgba(135, 135, 135, 0);
@@ -350,14 +339,6 @@ input:focus, textarea:focus, select:focus {
 		gap: var(--spacing-md);
 	}
 	
-	.chat-icon {
-		color: var(--text-tertiary);
-		flex-shrink: 0;
-	}
-	
-	.result-item.selected .chat-icon {
-		color: white;
-	}
 	
 	.chat-info {
 		flex: 1;

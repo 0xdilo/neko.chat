@@ -907,6 +907,7 @@ async function handleKeydown(e) {
 						class="model-selector-dropdown"
 						use:clickOutside={() => (showTopModelSelector = false)}
 						on:click|stopPropagation
+						on:keydown
 						role="menu"
 						tabindex="-1"
 					>
@@ -924,10 +925,13 @@ async function handleKeydown(e) {
 												availableProviders
 													.slice(0, availableProviders.indexOf(provider))
 													.reduce((acc, p) => acc + p.models.length, 0) + index}
-											<label
+											<div
 												class="model-item"
 												class:selected={currentSelectedModels.includes(model.id)}
 												class:highlighted={globalIndex === selectedModelIndex}
+												role="menuitemcheckbox"
+												aria-checked={currentSelectedModels.includes(model.id)}
+												tabindex="0"
 												on:click={(e) => {
 													e.preventDefault();
 													const modelId = model.id;
@@ -940,6 +944,19 @@ async function handleKeydown(e) {
 														newSelection = [...currentSelectedModels, modelId];
 													}
 													handleModelSelectionChange(newSelection);
+												}}
+												on:keydown={(e) => {
+													if (e.key === 'Enter' || e.key === ' ') {
+														e.preventDefault();
+														const modelId = model.id;
+														let newSelection;
+														if (currentSelectedModels.includes(modelId)) {
+															newSelection = currentSelectedModels.filter(m => m !== modelId);
+														} else {
+															newSelection = [...currentSelectedModels, modelId];
+														}
+														handleModelSelectionChange(newSelection);
+													}
 												}}
 											>
 												<input
@@ -967,7 +984,7 @@ async function handleKeydown(e) {
 														/>
 													</svg>
 												</div>
-											</label>
+											</div>
 										{/each}
 									</div>
 								{/if}
@@ -1003,7 +1020,6 @@ async function handleKeydown(e) {
 										use:autoResize
 										class="message-edit-input"
 										placeholder="Edit your message..."
-										autofocus
 									></textarea>
 									<div class="edit-actions">
 										<button
@@ -1037,12 +1053,23 @@ async function handleKeydown(e) {
 										</div>
 									{:else}
 										<div
+											role="button"
 											class="message-text expandable"
+											tabindex="0"
 											on:click={() => {
 												isExpanded
 													? expandedUserMessages.delete(message.id)
 													: expandedUserMessages.add(message.id);
 												expandedUserMessages = expandedUserMessages;
+											}}
+											on:keydown={(e) => {
+												if (e.key === 'Enter' || e.key === ' ') {
+													e.preventDefault();
+													isExpanded
+														? expandedUserMessages.delete(message.id)
+														: expandedUserMessages.add(message.id);
+													expandedUserMessages = expandedUserMessages;
+												}
 											}}
 										>
 											<div class="user-content-wrapper" class:truncated={!isExpanded}>
@@ -1128,6 +1155,7 @@ async function handleKeydown(e) {
 				class="scroll-to-bottom-btn"
 				on:click={() => scrollToBottom()}
 				title="Scroll to bottom"
+				aria-label="scroll-to-bottom"
 			>
 				<svg
 					width="20"
@@ -1202,8 +1230,9 @@ on:keydown={handleKeydown}
 	</div>
 
 	{#if showBranchModal}
-		<div class="modal-overlay" on:click={closeBranchModal}>
-			<div class="branch-modal" on:click|stopPropagation>
+		<!-- svelte-ignore a11y-click-events-have-key-events -->
+		<div class="modal-overlay" on:click={closeBranchModal} on:keydown={(e) => e.key === 'Escape' && closeBranchModal()} role="presentation">
+			<div class="branch-modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="0">
 				<div class="modal-header">
 					<h3>Branch Conversation</h3>
 					<button class="modal-close" on:click={closeBranchModal}>
@@ -1240,8 +1269,9 @@ on:keydown={handleKeydown}
 	{/if}
 
 	{#if showModelSelection}
-		<div class="modal-overlay" on:click={cancelModelSelection}>
-			<div class="branch-modal" on:click|stopPropagation>
+		<!-- svelte-ignore a11y-click-events-have-key-events -->
+		<div class="modal-overlay" on:click={cancelModelSelection} on:keydown={(e) => e.key === 'Escape' && cancelModelSelection()} role="presentation">
+			<div class="branch-modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="0">
 				<div class="modal-header">
 					<h3>Select Model for Branch</h3>
 					<button class="modal-close" on:click={cancelModelSelection}>
@@ -1362,12 +1392,6 @@ on:keydown={handleKeydown}
 	}
 	.message.user .message-content {
 		align-items: flex-end;
-	}
-	.message-header {
-		display: flex;
-		align-items: center;
-		gap: var(--spacing-sm);
-		margin-bottom: var(--spacing-xs);
 	}
 	.message-text {
 		font-size: var(--font-size-sm);
@@ -1780,21 +1804,6 @@ on:keydown={handleKeydown}
 			transform: translateY(0);
 		}
 	}
-
-	.loading-spinner-small {
-		width: 16px;
-		height: 16px;
-		border: 2px solid var(--border-primary);
-		border-top: 2px solid var(--accent-primary);
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-	}
-
-	.input-action-button.loading {
-		opacity: 0.7;
-		cursor: not-allowed;
-	}
-
 
 	.cursor-blink {
 		animation: blink 1s infinite;

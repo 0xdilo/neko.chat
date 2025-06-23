@@ -197,12 +197,20 @@
 	<div
 		class="modal-overlay"
 		transition:fade={{ duration: 200 }}
+		role="dialog"
+		aria-modal="true"
+		tabindex="-1"
 		on:click={() => (showAddModal = false)}
+		on:keydown={(e) => e.key === 'Escape' && (showAddModal = false)}
 	>
 		<div
 			class="modal-content"
 			transition:scale={{ duration: 200, start: 0.95 }}
+			role="dialog"
+			aria-modal="true"
+			tabindex="0"
 			on:click|stopPropagation
+			on:keydown|stopPropagation
 		>
 			<div class="modal-header">
 				<h3>add new api key</h3>
@@ -210,7 +218,7 @@
 					<X size={20} />
 				</button>
 			</div>
-			<div class="modal-body">
+			<form class="modal-body">
 				<div class="form-group">
 					<label for="provider">provider</label>
 					<select id="provider" bind:value={newApiKey.provider} disabled={isLoading}>
@@ -234,7 +242,7 @@
 						Your API key will be securely encrypted and stored.
 					</small>
 				</div>
-			</div>
+			</form>
 			<div class="modal-footer">
 				<button 
 					class="cancel-btn" 
@@ -438,15 +446,6 @@
 		height: 32px;
 		border: 3px solid var(--border-primary);
 		border-top: 3px solid var(--accent-primary);
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-	}
-
-	.loading-spinnerfsmall {
-		width: 16px;
-		height: 16px;
-		border: 2px solid var(--border-primary);
-		border-top: 2px solid var(--bg-primary);
 		border-radius: 50%;
 		animation: spin 1s linear infinite;
 	}

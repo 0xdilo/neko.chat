@@ -16,8 +16,6 @@ pub trait LLMClient: Send + Sync {
         messages: Vec<Value>,
     ) -> Result<Pin<Box<dyn Stream<Item = Result<String, AppError>> + Send>>, AppError>;
 
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError>;
-
     async fn chat_stream_with_web_search(
         &self,
         model: &str,
@@ -401,7 +399,7 @@ impl LLMClient for OpenAIClient {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             tracing::error!("openai api error: {:?}", error_text);
-            
+
             // Parse error message from OpenAI API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -423,7 +421,7 @@ impl LLMClient for OpenAIClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "OpenAI".to_string(),
                 status_code: Some(status.as_u16()),
@@ -464,8 +462,12 @@ impl LLMClient for OpenAIClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("OpenAI streaming API error: status {}, body: {}", status, error_text);
-            
+            tracing::error!(
+                "OpenAI streaming API error: status {}, body: {}",
+                status,
+                error_text
+            );
+
             // Parse error message from OpenAI API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -487,7 +489,7 @@ impl LLMClient for OpenAIClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "OpenAI".to_string(),
                 status_code: Some(status.as_u16()),
@@ -500,7 +502,7 @@ impl LLMClient for OpenAIClient {
         let stream = async_stream::stream! {
             let mut inner_stream = byte_stream;
             let mut buffer = Vec::new();
-            
+
             while let Some(chunk_result) = inner_stream.next().await {
                 let chunk = match chunk_result {
                     Ok(c) => c,
@@ -512,13 +514,13 @@ impl LLMClient for OpenAIClient {
                 };
 
                 buffer.extend_from_slice(&chunk);
-                
+
                 // Process complete lines from buffer
                 let mut start = 0;
                 while let Some(newline_pos) = buffer[start..].iter().position(|&b| b == b'\n') {
                     let line_end = start + newline_pos;
                     let line = &buffer[start..line_end];
-                    
+
                     if line.starts_with(b"data: ") {
                         let data = &line[6..];
                         if data == b"[DONE]" {
@@ -534,7 +536,7 @@ impl LLMClient for OpenAIClient {
                     }
                     start = line_end + 1;
                 }
-                
+
                 // Keep remaining incomplete data in buffer
                 if start < buffer.len() {
                     buffer.drain(..start);
@@ -545,10 +547,6 @@ impl LLMClient for OpenAIClient {
         };
 
         Ok(Box::pin(stream))
-    }
-
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
-        self.chat(model, messages).await
     }
 
     async fn chat_stream_with_web_search(
@@ -625,8 +623,12 @@ impl LLMClient for AnthropicClient {
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("Anthropic API error: status {}, body: {}", status, error_text);
-            
+            tracing::error!(
+                "Anthropic API error: status {}, body: {}",
+                status,
+                error_text
+            );
+
             // Parse error message from Anthropic API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -648,7 +650,7 @@ impl LLMClient for AnthropicClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "Anthropic".to_string(),
                 status_code: Some(status.as_u16()),
@@ -714,7 +716,7 @@ impl LLMClient for AnthropicClient {
                 status,
                 error_text
             );
-            
+
             // Parse error message from Anthropic API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -736,7 +738,7 @@ impl LLMClient for AnthropicClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "Anthropic".to_string(),
                 status_code: Some(status.as_u16()),
@@ -787,57 +789,6 @@ impl LLMClient for AnthropicClient {
         };
 
         Ok(Box::pin(stream))
-    }
-
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
-        let (system_prompt, user_messages) = self.separate_system_messages(messages);
-
-        let mut request_body = serde_json::json!({
-            "model": model,
-            "max_tokens": 4096,
-            "messages": user_messages,
-            "tools": [
-                {
-                    "type": "web_search_20250305",
-                    "name": "web_search",
-                    "max_uses": 5
-                }
-            ]
-        });
-
-        if let Some(system) = system_prompt {
-            request_body["system"] = serde_json::Value::String(system);
-        }
-
-        let response = self
-            .client
-            .post("https://api.anthropic.com/v1/messages")
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&request_body)
-            .send()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
-
-        if !response.status().is_success() {
-            tracing::error!("anthropic web search api error: {:?}", response.text().await);
-            return Err(AppError::InternalServerError);
-        }
-
-        let response_json: Value = response
-            .json()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
-
-        let content = response_json
-            .get("content")
-            .and_then(|c| c.as_array())
-            .and_then(|arr| arr.first())
-            .and_then(|item| item.get("text"))
-            .and_then(|text| text.as_str())
-            .unwrap_or_default();
-
-        Ok(content.to_string())
     }
 
     async fn chat_stream_with_web_search(
@@ -1039,42 +990,6 @@ impl LLMClient for OpenRouterClient {
         Ok(Box::pin(stream))
     }
 
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
-        let model_with_web = if model.contains(":online") {
-            model.to_string()
-        } else {
-            format!("{}:online", model)
-        };
-
-        let response = self
-            .client
-            .post("https://openrouter.ai/api/v1/chat/completions")
-            .bearer_auth(&self.api_key)
-            .json(&serde_json::json!({
-                "model": model_with_web,
-                "messages": messages,
-            }))
-            .send()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
-
-        if !response.status().is_success() {
-            tracing::error!("openrouter web search api error: {:?}", response.text().await);
-            return Err(AppError::InternalServerError);
-        }
-
-        let openai_response = response.json::<OpenAiResponse>().await.map_err(|e| {
-            tracing::error!("failed to parse openrouter web search response: {}", e);
-            AppError::InternalServerError
-        })?;
-
-        Ok(openai_response
-            .choices
-            .get(0)
-            .map(|c| c.message.content.clone())
-            .unwrap_or_default())
-    }
-
     async fn chat_stream_with_web_search(
         &self,
         model: &str,
@@ -1100,7 +1015,10 @@ impl LLMClient for OpenRouterClient {
             .map_err(|_| AppError::InternalServerError)?;
 
         if !response.status().is_success() {
-            tracing::error!("openrouter web search streaming api error: {:?}", response.text().await);
+            tracing::error!(
+                "openrouter web search streaming api error: {:?}",
+                response.text().await
+            );
             return Err(AppError::InternalServerError);
         }
 
@@ -1256,10 +1174,6 @@ impl LLMClient for XaiClient {
         Ok(Box::pin(stream))
     }
 
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
-        self.chat(model, messages).await
-    }
-
     async fn chat_stream_with_web_search(
         &self,
         model: &str,
@@ -1345,7 +1259,7 @@ impl LLMClient for GeminiClient {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
             tracing::error!("gemini api error: {:?}", error_text);
-            
+
             // Parse error message from Gemini API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -1367,7 +1281,7 @@ impl LLMClient for GeminiClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "Gemini".to_string(),
                 status_code: Some(status.as_u16()),
@@ -1377,90 +1291,6 @@ impl LLMClient for GeminiClient {
 
         let gemini_response = response.json::<GeminiResponse>().await.map_err(|e| {
             tracing::error!("failed to parse gemini response: {}", e);
-            AppError::InternalServerError
-        })?;
-
-        Ok(gemini_response
-            .candidates
-            .get(0)
-            .and_then(|c| c.content.parts.get(0))
-            .map(|p| p.text.clone())
-            .unwrap_or_default())
-    }
-
-    async fn chat_with_web_search(&self, model: &str, messages: Vec<Value>) -> Result<String, AppError> {
-        let mut contents = Vec::new();
-
-        for message in messages {
-            if let (Some(role), Some(content)) = (
-                message.get("role").and_then(|r| r.as_str()),
-                message.get("content").and_then(|c| c.as_str()),
-            ) {
-                if role == "system" {
-                    continue;
-                }
-                let gemini_role = if role == "user" { "user" } else { "model" };
-                contents.push(serde_json::json!({
-                    "role": gemini_role,
-                    "parts": [{"text": content}]
-                }));
-            }
-        }
-
-        let response = self
-            .client
-            .post(&format!(
-                "https://generativelanguage.googleapis.com/v1beta/models/{}:generateContent?key={}",
-                model, self.api_key
-            ))
-            .json(&serde_json::json!({
-                "contents": contents,
-                "tools": [
-                    {
-                        "google_search": {}
-                    }
-                ]
-            }))
-            .send()
-            .await
-            .map_err(|_| AppError::InternalServerError)?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_text = response.text().await.unwrap_or_default();
-            tracing::error!("gemini web search api error: {:?}", error_text);
-            
-            // Parse error message from Gemini API response
-            let error_message = if !error_text.is_empty() {
-                if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
-                    error_json
-                        .get("error")
-                        .and_then(|e| e.get("message"))
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Service Unavailable")
-                        .to_string()
-                } else {
-                    error_text
-                }
-            } else {
-                match status.as_u16() {
-                    503 => "Service Unavailable".to_string(),
-                    429 => "Rate limit exceeded".to_string(),
-                    401 => "Invalid API key".to_string(),
-                    400 => "Bad request".to_string(),
-                    _ => format!("HTTP {}", status.as_u16()),
-                }
-            };
-            
-            return Err(AppError::LLMProviderError {
-                provider: "Gemini".to_string(),
-                status_code: Some(status.as_u16()),
-                message: error_message,
-            });
-        }
-
-        let gemini_response = response.json::<GeminiResponse>().await.map_err(|e| {
-            tracing::error!("failed to parse gemini web search response: {}", e);
             AppError::InternalServerError
         })?;
 
@@ -1523,7 +1353,7 @@ impl LLMClient for GeminiClient {
                 status,
                 error_text
             );
-            
+
             // Parse error message from Gemini API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -1545,7 +1375,7 @@ impl LLMClient for GeminiClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "Gemini".to_string(),
                 status_code: Some(status.as_u16()),
@@ -1663,7 +1493,7 @@ impl LLMClient for GeminiClient {
                 status,
                 error_text
             );
-            
+
             // Parse error message from Gemini API response
             let error_message = if !error_text.is_empty() {
                 if let Ok(error_json) = serde_json::from_str::<serde_json::Value>(&error_text) {
@@ -1685,7 +1515,7 @@ impl LLMClient for GeminiClient {
                     _ => format!("HTTP {}", status.as_u16()),
                 }
             };
-            
+
             return Err(AppError::LLMProviderError {
                 provider: "Gemini".to_string(),
                 status_code: Some(status.as_u16()),

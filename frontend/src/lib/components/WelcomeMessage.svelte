@@ -173,36 +173,6 @@
     transform: translateY(0);
   }
 
-  .name-suggestion {
-    padding: var(--spacing-lg);
-    background: var(--bg-secondary);
-    border: 1px solid var(--border-primary);
-    border-radius: var(--radius-lg);
-    animation: welcome-fade-in 1.2s ease-out 0.4s both;
-  }
-
-  .name-suggestion p {
-    margin: 0;
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
-  }
-
-  .suggestion-text {
-    font-weight: 600;
-    color: var(--accent-primary);
-  }
-
-  .settings-link {
-    color: var(--accent-primary);
-    text-decoration: none;
-    font-weight: 500;
-    transition: color var(--transition-fast);
-  }
-
-  .settings-link:hover {
-    color: var(--accent-primary-dark, var(--accent-primary));
-    text-decoration: underline;
-  }
 
   .api-key-notice {
     padding: var(--spacing-xl);
@@ -216,22 +186,6 @@
     align-items: center;
   }
 
-  .notice-ascii {
-    display: flex;
-    justify-content: center;
-    max-width: 100%;
-    overflow: hidden;
-    text-align: left; /* Override parent text-align */
-  }
-
-  .notice-ascii :global(.ascii-art) {
-    font-size: 0.7rem;
-    text-align: left !important; /* Force left alignment for ASCII art */
-  }
-
-  .notice-ascii :global(.ascii-container) {
-    text-align: left !important; /* Ensure container doesn't center content */
-  }
 
   .notice-content h3 {
     margin: 0 0 var(--spacing-md) 0;
