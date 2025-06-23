@@ -13,6 +13,6 @@ pub fn create_auth_routes() -> Router<AppState> {
             "/api/auth/google/callback",
             get(auth_handler::google_callback),
         )
-        .route("/api/auth/me", get(auth_handler::get_me))
         .route("/api/auth/profile", get(auth_handler::get_me))
 }
+

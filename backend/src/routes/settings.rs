@@ -1,6 +1,6 @@
 use crate::{handlers::settings_handler, AppState};
 use axum::{
-    routing::{delete, get, patch, post, put},
+    routing::{get, patch, post},
     Router,
 };
 
@@ -53,3 +53,4 @@ pub fn create_settings_routes() -> Router<AppState> {
             post(settings_handler::toggle_model_enabled),
         )
 }
+

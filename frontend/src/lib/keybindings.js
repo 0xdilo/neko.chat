@@ -89,9 +89,8 @@ export function createKeybindingSystem() {
 
   let handlers = {};
   let isEnabled = true;
-  let mode = "normal"; // normal, insert, command
+  let mode = "normal";
 
-  // Update stores
   eventHandlers.set(handlers);
 
   function isInputFocused() {
@@ -241,19 +240,16 @@ export function createKeybindingSystem() {
     const alt = event.altKey;
     const shift = event.shiftKey;
 
-    // Build key combination string
     let keyCombo = "";
     if (ctrl) keyCombo += "ctrl+";
     if (alt) keyCombo += "alt+";
     if (shift) keyCombo += "shift+";
     keyCombo += key.toLowerCase();
 
-    // Handle sequence keys (like gg)
     if (!ctrl && !alt && key.length === 1 && !isInputFocused()) {
       clearTimeout(sequenceTimeout);
       sequenceBuffer += key;
 
-      // Check for sequence matches
       const binding = defaultKeybindings[sequenceBuffer];
       if (binding) {
         event.preventDefault();
@@ -263,7 +259,6 @@ export function createKeybindingSystem() {
         return;
       }
 
-      // Check if this could be start of a sequence
       const hasPartialMatch = Object.keys(defaultKeybindings).some(
         (k) => k.startsWith(sequenceBuffer) && k.length > sequenceBuffer.length,
       );
@@ -280,7 +275,6 @@ export function createKeybindingSystem() {
       }
     }
 
-    // Handle direct key combinations
     const binding = defaultKeybindings[keyCombo] || defaultKeybindings[key];
     if (binding && (!isInputFocused() || ["Escape", "Enter"].includes(key))) {
       event.preventDefault();
@@ -311,7 +305,6 @@ export function createKeybindingSystem() {
     keybindingMode.set(mode);
   }
 
-  // Global keyboard event listener
   document.addEventListener("keydown", handleKeyPress);
 
   return {
@@ -327,12 +320,3 @@ export function createKeybindingSystem() {
     },
   };
 }
-
-// Helper function to show available keybindings
-export function getKeybindingHelp() {
-  return Object.entries(defaultKeybindings).map(([key, binding]) => ({
-    key,
-    description: binding.description,
-  }));
-}
-

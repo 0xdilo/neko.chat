@@ -1,6 +1,6 @@
 use crate::{handlers::key_handler, AppState};
 use axum::{
-    routing::{delete, get, post},
+    routing::{get, post},
     Router,
 };
 
@@ -15,3 +15,4 @@ pub fn create_key_routes() -> Router<AppState> {
             get(key_handler::get_key).delete(key_handler::delete_key),
         )
 }
+

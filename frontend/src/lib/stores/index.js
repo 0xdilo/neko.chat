@@ -15,13 +15,11 @@ import {
   apiKeysLoaded,
 } from "./settings.js";
 import { initializeAuth } from "./auth.js";
-import { initializeApp } from "./app.js";
 
 export function initializeStores() {
   initializeChats();
   initializeSettings();
   initializeAuth();
-  initializeApp();
 }
 
 export async function initializeModelsAfterAuth() {

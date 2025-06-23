@@ -212,17 +212,6 @@ export async function withErrorHandling(
   }
 }
 
-export async function withLoading(apiCall, loadingMessage = "Loading...") {
-  const { showLoading, hideLoading } = await import("$lib/stores/app.js");
-
-  try {
-    showLoading(loadingMessage);
-    return await apiCall();
-  } finally {
-    hideLoading();
-  }
-}
-
 // API endpoints
 export const endpoints = {
   // Authentication
