@@ -917,9 +917,19 @@ impl LLMClient for OpenRouterClient {
             }))
             .send()
             .await
-            .map_err(|_| AppError::InternalServerError)?;
+            .map_err(|e| {
+                tracing::error!("OpenRouter API request failed: {}", e);
+                AppError::InternalServerError
+            })?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "OpenRouter API error: status {}, body: {}",
+                status,
+                error_text
+            );
             return Err(AppError::InternalServerError);
         }
 
@@ -951,9 +961,19 @@ impl LLMClient for OpenRouterClient {
             }))
             .send()
             .await
-            .map_err(|_| AppError::InternalServerError)?;
+            .map_err(|e| {
+                tracing::error!("OpenRouter API request failed: {}", e);
+                AppError::InternalServerError
+            })?;
 
         if !response.status().is_success() {
+            let status = response.status();
+            let error_text = response.text().await.unwrap_or_default();
+            tracing::error!(
+                "OpenRouter streaming API error: status {}, body: {}",
+                status,
+                error_text
+            );
             return Err(AppError::InternalServerError);
         }
 
