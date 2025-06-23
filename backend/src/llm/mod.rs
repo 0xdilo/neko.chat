@@ -1354,17 +1354,12 @@ impl LLMClient for GeminiClient {
             .post(&format!("https://generativelanguage.googleapis.com/v1beta/models/{}:streamGenerateContent?alt=sse&key={}", model, self.api_key))
             .json(&serde_json::json!({
                 "contents": contents,
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "topP": 0.8,
-                    "topK": 40,
-                    "maxOutputTokens": 8192,
-                }
             }))
             .send()
             .await
             .map_err(|_| AppError::InternalServerError)?;
 
+        println!("{:?}", response);
         if !response.status().is_success() {
             let status = response.status();
             let error_text = response.text().await.unwrap_or_default();
@@ -1405,6 +1400,7 @@ impl LLMClient for GeminiClient {
 
         let byte_stream = response.bytes_stream();
 
+
         let stream = async_stream::stream! {
             let mut inner_stream = byte_stream;
 
@@ -1417,6 +1413,7 @@ impl LLMClient for GeminiClient {
                         break;
                     }
                 };
+                println!("{:?}", chunk);
 
                 for line in chunk.split(|&b| b == b'\n') {
                     if line.starts_with(b"data: ") {
@@ -1494,12 +1491,7 @@ impl LLMClient for GeminiClient {
                         "google_search": {}
                     }
                 ],
-                "generationConfig": {
-                    "temperature": 0.7,
-                    "topP": 0.8,
-                    "topK": 40,
-                    "maxOutputTokens": 8192,
-                }
+  
             }))
             .send()
             .await

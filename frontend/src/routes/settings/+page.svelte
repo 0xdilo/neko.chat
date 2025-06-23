@@ -85,12 +85,10 @@
 	let appearanceSettings = {
 		fontSize: "medium",
 		messageAnimation: true,
-		compactMode: false,
 	};
 
 	const handlers = {
 		updateGeneral: (e) => {
-			// General settings are automatically saved in the component
 			triggerSave();
 		},
 		updateApiKeys: (e) => {
@@ -98,7 +96,6 @@
 			triggerSave();
 		},
 		updateModels: (e) => {
-			// Models are saved in the component
 			triggerSave();
 		},
 		updateSystemPrompts: (e) => {

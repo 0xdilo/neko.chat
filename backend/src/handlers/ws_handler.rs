@@ -39,8 +39,6 @@ pub async fn websocket_handler(
 async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: String) {
     let mut rx = state.tx.subscribe();
 
-    // This task listens for new messages on the broadcast channel
-    // and sends them to the client if they belong to the user.
     tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
             let chat_owner_id: Result<(String,), sqlx::Error> =
@@ -53,7 +51,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: String) 
                 if owner_id == user_id {
                     let payload = serde_json::to_string(&msg).unwrap();
                     if socket.send(WsMessage::Text(payload)).await.is_err() {
-                        // Client disconnected
                         break;
                     }
                 }

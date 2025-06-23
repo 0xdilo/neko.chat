@@ -1,13 +1,10 @@
 import { writable } from "svelte/store";
 import { browser } from "$app/environment";
 
-// Store for active keybinding mode
 export const keybindingMode = writable("normal");
 
-// Store for keybinding sequences
 export const commandSequence = writable("");
 
-// Default keybindings configuration
 export const defaultKeybindings = {
   // Navigation
   j: { action: "scroll_down", description: "Scroll down" },
@@ -20,41 +17,19 @@ export const defaultKeybindings = {
   // Chat actions
   o: { action: "new_chat", description: "New chat" },
   i: { action: "focus_input", description: "Focus message input" },
-  "/": { action: "search", description: "Search chats" },
 
   // Modal/UI actions
   Escape: { action: "escape", description: "Close modal/cancel" },
   Enter: { action: "submit", description: "Submit/confirm" },
 
   // Application shortcuts
-  "ctrl+n": { action: "new_chat", description: "New chat" },
   "ctrl+o": { action: "new_chat", description: "New chat" },
-  "ctrl+k": { action: "command_palette", description: "Command palette" },
   "ctrl+m": { action: "model_modal", description: "Open model modal" },
   "ctrl+b": { action: "toggle_sidebar", description: "Toggle sidebar" },
-  "ctrl+,": { action: "settings", description: "Open settings" },
-  "ctrl+t": { action: "toggle_theme", description: "Toggle theme" },
-
-  // Chat navigation
-  "ctrl+j": { action: "next_chat", description: "Next chat" },
-  "ctrl+k": { action: "prev_chat", description: "Previous chat" },
-
-  // Numbers for chat selection
-  1: { action: "select_chat_1", description: "Select chat 1" },
-  2: { action: "select_chat_2", description: "Select chat 2" },
-  3: { action: "select_chat_3", description: "Select chat 3" },
-  4: { action: "select_chat_4", description: "Select chat 4" },
-  5: { action: "select_chat_5", description: "Select chat 5" },
-  6: { action: "select_chat_6", description: "Select chat 6" },
-  7: { action: "select_chat_7", description: "Select chat 7" },
-  8: { action: "select_chat_8", description: "Select chat 8" },
-  9: { action: "select_chat_9", description: "Select chat 9" },
 };
 
-// Global event handlers store
 export const eventHandlers = writable({});
 
-// Scroll utilities
 export function smoothScrollTo(element, target) {
   if (!element) return;
 
@@ -71,7 +46,6 @@ export function scrollByAmount(element, amount) {
   smoothScrollTo(element, current + amount);
 }
 
-// Key sequence handling
 let sequenceBuffer = "";
 let sequenceTimeout = null;
 
@@ -157,7 +131,6 @@ export function createKeybindingSystem() {
         break;
 
       case "toggle_sidebar":
-        // Dispatch custom event for sidebar toggle
         window.dispatchEvent(new CustomEvent("toggle-sidebar"));
         break;
 
@@ -182,11 +155,9 @@ export function createKeybindingSystem() {
         break;
 
       case "escape":
-        // Remove focus from any input
         if (document.activeElement) {
           document.activeElement.blur();
         }
-        // Close modals
         window.dispatchEvent(new CustomEvent("escape-action"));
         break;
 
@@ -230,7 +201,6 @@ export function createKeybindingSystem() {
   function handleKeyPress(event) {
     if (!isEnabled) return;
 
-    // Don't intercept when typing in inputs (except for specific keys)
     if (isInputFocused() && !["Escape", "Enter"].includes(event.key)) {
       return;
     }
