@@ -1,9 +1,10 @@
 use crate::{auth::Claims, error::AppError, database::UserModel, llm::{fetch_available_models, NormalizedModel}, AppState};
 use axum::{extract::State, Json};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use uuid::Uuid;
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
+use chrono::{DateTime, Utc};
 
 #[derive(Serialize, Deserialize, sqlx::FromRow)]
 pub struct SystemPrompt {
@@ -14,7 +15,7 @@ pub struct SystemPrompt {
     pub description: Option<String>,
     pub is_default: bool,
     pub category: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -43,8 +44,8 @@ pub struct UserSettings {
     pub font_size: i32,
     pub notifications_enabled: bool,
     pub auto_save: bool,
-    pub created_at: String,
-    pub updated_at: String,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
 }
 
 #[derive(Deserialize)]
@@ -57,7 +58,7 @@ pub struct UpdateSettingsPayload {
 }
 
 pub async fn get_settings(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<UserSettings>, AppError> {
     let user_id = claims.sub;
@@ -90,7 +91,7 @@ pub async fn get_settings(
 }
 
 pub async fn update_settings(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Json(payload): Json<UpdateSettingsPayload>,
 ) -> Result<Json<UserSettings>, AppError> {
@@ -104,7 +105,7 @@ pub async fn update_settings(
             font_size = COALESCE($3, font_size),
             notifications_enabled = COALESCE($4, notifications_enabled),
             auto_save = COALESCE($5, auto_save),
-            updated_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            updated_at = NOW()
         WHERE user_id = $6
         RETURNING *
         "#,
@@ -122,7 +123,7 @@ pub async fn update_settings(
 }
 
 pub async fn get_system_prompts(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<SystemPrompt>>, AppError> {
     let user_id = claims.sub;
@@ -138,7 +139,7 @@ pub async fn get_system_prompts(
 }
 
 pub async fn get_active_system_prompts(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<SystemPrompt>>, AppError> {
     let user_id = claims.sub;
@@ -154,7 +155,7 @@ pub async fn get_active_system_prompts(
 }
 
 pub async fn create_system_prompt(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Json(payload): Json<CreateSystemPromptPayload>,
 ) -> Result<Json<SystemPrompt>, AppError> {
@@ -184,7 +185,7 @@ pub async fn create_system_prompt(
 }
 
 pub async fn update_system_prompt(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     axum::extract::Path(prompt_id): axum::extract::Path<String>,
     Json(payload): Json<UpdateSystemPromptPayload>,
@@ -234,7 +235,7 @@ pub async fn update_system_prompt(
 }
 
 pub async fn delete_system_prompt(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     axum::extract::Path(prompt_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -254,7 +255,7 @@ pub async fn delete_system_prompt(
 }
 
 pub async fn set_active_prompt(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     axum::extract::Path(prompt_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -292,7 +293,7 @@ pub async fn set_active_prompt(
 }
 
 pub async fn toggle_active_prompt(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     axum::extract::Path(prompt_id): axum::extract::Path<String>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -329,12 +330,12 @@ pub async fn toggle_active_prompt(
 }
 
 pub async fn get_api_keys(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<serde_json::Value>>, AppError> {
     let user_id = claims.sub;
 
-    let keys = sqlx::query_as::<_, (String, String)>(
+    let keys = sqlx::query_as::<_, (String, DateTime<Utc>)>(
         "SELECT provider, created_at FROM user_api_keys WHERE user_id = $1",
     )
     .bind(&user_id)
@@ -346,7 +347,7 @@ pub async fn get_api_keys(
         .map(|(provider, created_at)| {
             serde_json::json!({
                 "provider": provider,
-                "created_at": created_at,
+                "created_at": created_at.to_rfc3339(),
                 "has_key": true
             })
         })
@@ -407,7 +408,7 @@ pub async fn fetch_models_for_provider(
 }
 
 pub async fn get_user_models(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<UserModel>>, AppError> {
     let user_id = claims.sub;
@@ -423,7 +424,7 @@ pub async fn get_user_models(
 }
 
 pub async fn update_user_model_preferences(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Json(payload): Json<UpdateModelPreferencesPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -463,7 +464,7 @@ pub async fn update_user_model_preferences(
 }
 
 pub async fn get_enabled_models_for_user(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<UserModel>>, AppError> {
     let user_id = claims.sub;
@@ -486,7 +487,7 @@ pub struct ToggleModelPayload {
 }
 
 pub async fn toggle_model_enabled(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Json(payload): Json<ToggleModelPayload>,
 ) -> Result<Json<serde_json::Value>, AppError> {
@@ -540,4 +541,3 @@ pub async fn toggle_model_enabled(
         "provider": payload.provider
     })))
 }
-

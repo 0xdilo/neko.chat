@@ -17,13 +17,6 @@ impl Config {
 
         let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-        if database_url.starts_with("sqlite:") {
-            let db_path = database_url.strip_prefix("sqlite:").unwrap();
-            if let Some(parent) = std::path::Path::new(db_path).parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-        }
-
         Self {
             database_url,
             jwt_secret: env::var("JWT_SECRET").expect("JWT_SECRET must be set"),

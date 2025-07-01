@@ -7,7 +7,7 @@ use bcrypt::{hash, verify, DEFAULT_COST};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -44,7 +44,7 @@ pub struct AuthResponse {
 }
 
 pub async fn register(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     Json(payload): Json<RegisterPayload>,
 ) -> Result<Json<User>, AppError> {
     let password_hash = hash(&payload.password, DEFAULT_COST)?;

@@ -89,7 +89,7 @@ pub struct ParallelModelConfig {
 
 // --- helper function to get decrypted api key ---
 async fn get_decrypted_key(
-    pool: &sqlx::SqlitePool,
+    pool: &sqlx::PgPool,
     user_id: &str,
     provider: &str,
     encryption_key: &str,
@@ -111,7 +111,7 @@ async fn get_decrypted_key(
 
 // --- helper to prepare conversation history ---
 async fn prepare_conversation(
-    pool: &sqlx::SqlitePool,
+    pool: &sqlx::PgPool,
     chat: &Chat,
 ) -> Result<Vec<serde_json::Value>, AppError> {
     let history = sqlx::query_as::<_, Message>(
@@ -432,7 +432,7 @@ pub async fn stream_message(
             struct ContentSaver {
                 content: String,
                 has_streamed: bool,
-                pool: sqlx::SqlitePool,
+                pool: sqlx::PgPool,
                 chat_id: String,
                 tx: tokio::sync::broadcast::Sender<Message>,
             }
@@ -581,7 +581,7 @@ pub async fn regenerate_response(
             struct ContentSaver {
                 content: String,
                 has_streamed: bool,
-                pool: sqlx::SqlitePool,
+                pool: sqlx::PgPool,
                 chat_id: String,
                 tx: tokio::sync::broadcast::Sender<Message>,
             }

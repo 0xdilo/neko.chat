@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use chrono::{DateTime, Utc};
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
 #[serde(rename_all = "camelCase")]
@@ -11,7 +12,7 @@ pub struct User {
     pub google_id: Option<String>,
     pub avatar_url: Option<String>,
     pub role: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -27,7 +28,7 @@ pub struct Chat {
     pub is_branch: bool,
     pub parent_chat_id: Option<String>,
     pub branch_point_message_id: Option<String>,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -37,7 +38,7 @@ pub struct Message {
     pub chat_id: String,
     pub role: String,
     pub content: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -47,7 +48,7 @@ pub struct UserApiKey {
     pub provider: String,
     #[serde(skip_serializing)]
     pub encrypted_key: String,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, sqlx::FromRow)]
@@ -58,5 +59,5 @@ pub struct UserModel {
     pub model_name: String,
     pub is_enabled: bool,
     pub display_order: i32,
-    pub created_at: String,
+    pub created_at: DateTime<Utc>,
 }

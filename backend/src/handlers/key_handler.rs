@@ -34,14 +34,14 @@ pub async fn add_key(
     let mc = new_magic_crypt!(&app_state.config.encryption_key, 256);
     let encrypted_key = mc.encrypt_str_to_base64(&payload.api_key);
 
-    // Use UPSERT logic for SQLite
+    // Use UPSERT logic for PostgreSQL
     let key_record = sqlx::query_as::<_, UserApiKey>(
         r#"
         INSERT INTO user_api_keys (user_id, provider, encrypted_key)
         VALUES ($1, $2, $3)
         ON CONFLICT(user_id, provider) DO UPDATE SET
             encrypted_key = excluded.encrypted_key,
-            created_at = strftime('%Y-%m-%d %H:%M:%f', 'now')
+            created_at = NOW()
         RETURNING *
         "#,
     )
@@ -53,12 +53,12 @@ pub async fn add_key(
 
     Ok(Json(ApiKeyResponse {
         provider: key_record.provider,
-        created_at: key_record.created_at,
+        created_at: key_record.created_at.to_rfc3339(),
     }))
 }
 
 pub async fn list_keys(
-    State(pool): State<sqlx::SqlitePool>,
+    State(pool): State<sqlx::PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<ApiKeyResponse>>, AppError> {
     let user_id = claims.sub;
@@ -73,7 +73,7 @@ pub async fn list_keys(
         .into_iter()
         .map(|k| ApiKeyResponse {
             provider: k.provider,
-            created_at: k.created_at,
+            created_at: k.created_at.to_rfc3339(),
         })
         .collect();
 
@@ -81,7 +81,7 @@ pub async fn list_keys(
 }
 
 pub async fn delete_key(
-    State(pool): State<sqlx::SqlitePool>,
+    State(pool): State<sqlx::PgPool>,
     claims: Claims,
     Path(provider): Path<String>,
 ) -> Result<(), AppError> {
@@ -121,6 +121,6 @@ pub async fn get_key(
     Ok(Json(DecryptedApiKeyResponse {
         provider: key_record.provider,
         api_key: decrypted_key,
-        created_at: key_record.created_at,
+        created_at: key_record.created_at.to_rfc3339(),
     }))
 }

@@ -11,8 +11,8 @@ use axum::http::{HeaderValue, Method};
 use bcrypt;
 use config::Config;
 use database::Message;
-use sqlx::sqlite::SqlitePoolOptions;
-use sqlx::SqlitePool;
+use sqlx::postgres::PgPoolOptions;
+use sqlx::PgPool;
 use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -21,13 +21,13 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Clone)]
 pub struct AppState {
-    db_pool: SqlitePool,
+    db_pool: PgPool,
     config: Config,
     tx: broadcast::Sender<Message>,
 }
 
-impl FromRef<AppState> for SqlitePool {
-    fn from_ref(app_state: &AppState) -> SqlitePool {
+impl FromRef<AppState> for PgPool {
+    fn from_ref(app_state: &AppState) -> PgPool {
         app_state.db_pool.clone()
     }
 }
@@ -58,7 +58,7 @@ async fn main() {
 
     let config = Config::from_env();
 
-    let db_pool = SqlitePoolOptions::new()
+    let db_pool = PgPoolOptions::new()
         .max_connections(10)
         .acquire_timeout(Duration::from_secs(5))
         .connect(&config.database_url)
@@ -76,7 +76,7 @@ async fn main() {
             google_id TEXT UNIQUE,
             avatar_url TEXT,
             role TEXT NOT NULL DEFAULT 'user',
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now'))
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )"#,
         r#"CREATE TABLE IF NOT EXISTS chats (
             id TEXT PRIMARY KEY,
@@ -89,7 +89,7 @@ async fn main() {
             is_branch BOOLEAN NOT NULL DEFAULT false,
             parent_chat_id TEXT,
             branch_point_message_id TEXT,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS messages (
@@ -97,14 +97,14 @@ async fn main() {
             chat_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS user_api_keys (
             user_id TEXT NOT NULL,
             provider TEXT NOT NULL,
             encrypted_key TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (user_id, provider),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
@@ -116,7 +116,7 @@ async fn main() {
             description TEXT,
             is_default BOOLEAN NOT NULL DEFAULT false,
             category TEXT NOT NULL DEFAULT 'general',
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS user_settings (
@@ -126,8 +126,8 @@ async fn main() {
             font_size INTEGER NOT NULL DEFAULT 14,
             notifications_enabled BOOLEAN NOT NULL DEFAULT true,
             auto_save BOOLEAN NOT NULL DEFAULT true,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
-            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
         r#"CREATE TABLE IF NOT EXISTS user_models (
@@ -137,7 +137,7 @@ async fn main() {
             model_name TEXT NOT NULL,
             is_enabled BOOLEAN NOT NULL DEFAULT true,
             display_order INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%d %H:%M:%f', 'now')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             PRIMARY KEY (user_id, provider, model_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
@@ -182,8 +182,9 @@ async fn main() {
             bcrypt::hash("admin", bcrypt::DEFAULT_COST).expect("failed to hash admin password");
 
         let admin_insert_result = sqlx::query(
-            r#"INSERT OR IGNORE INTO users (id, email, name, password_hash, role)
-            VALUES ($1, $2, $3, $4, $5)"#,
+            r#"INSERT INTO users (id, email, name, password_hash, role)
+            VALUES ($1, $2, $3, $4, $5)
+            ON CONFLICT (email) DO NOTHING"#,
         )
         .bind("admin-default-id")
         .bind("admin@admin.com")
@@ -211,37 +212,29 @@ async fn main() {
     tracing::info!("database schema initialized");
 
     let migration_result =
-        sqlx::query("ALTER TABLE chats ADD COLUMN is_branch BOOLEAN DEFAULT false")
+        sqlx::query("ALTER TABLE chats ADD COLUMN IF NOT EXISTS is_branch BOOLEAN DEFAULT false")
             .execute(&db_pool)
             .await;
 
     match migration_result {
         Ok(_) => tracing::info!("added is_branch column to chats table"),
-        Err(sqlx::Error::Database(db_err)) if db_err.message().contains("duplicate column") => {
-            tracing::info!("is_branch column already exists, skipping migration");
-        }
         Err(e) => {
             tracing::error!("failed to add is_branch column: {}", e);
-            panic!("migration failed: {}", e);
         }
     }
 
-    let migration_result = sqlx::query("ALTER TABLE chats ADD COLUMN parent_chat_id TEXT")
+    let migration_result = sqlx::query("ALTER TABLE chats ADD COLUMN IF NOT EXISTS parent_chat_id TEXT")
         .execute(&db_pool)
         .await;
 
     match migration_result {
         Ok(_) => tracing::info!("added parent_chat_id column to chats table"),
-        Err(sqlx::Error::Database(db_err)) if db_err.message().contains("duplicate column") => {
-            tracing::info!("parent_chat_id column already exists, skipping migration");
-        }
         Err(e) => {
             tracing::error!("failed to add parent_chat_id column: {}", e);
-            panic!("migration failed: {}", e);
         }
     }
 
-    let migration_result = sqlx::query("ALTER TABLE chats ADD COLUMN branch_point_message_id TEXT")
+    let migration_result = sqlx::query("ALTER TABLE chats ADD COLUMN IF NOT EXISTS branch_point_message_id TEXT")
         .execute(&db_pool)
         .await;
 
@@ -249,12 +242,8 @@ async fn main() {
         Ok(_) => {
             tracing::info!("added branch_point_message_id column to chats table")
         }
-        Err(sqlx::Error::Database(db_err)) if db_err.message().contains("duplicate column") => {
-            tracing::info!("branch_point_message_id column already exists, skipping migration");
-        }
         Err(e) => {
             tracing::error!("failed to add branch_point_message_id column: {}", e);
-            panic!("migration failed: {}", e);
         }
     }
 

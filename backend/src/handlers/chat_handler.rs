@@ -9,7 +9,7 @@ use axum::{
     Json,
 };
 use serde::Deserialize;
-use sqlx::SqlitePool;
+use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
@@ -49,7 +49,7 @@ pub struct UpdateMessagePayload {
 }
 
 pub async fn create_chat(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Json(payload): Json<CreateChatPayload>,
 ) -> Result<Json<Chat>, AppError> {
@@ -106,7 +106,7 @@ pub async fn create_chat(
 }
 
 pub async fn list_chats(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
 ) -> Result<Json<Vec<Chat>>, AppError> {
     let user_id = claims.sub;
@@ -120,7 +120,7 @@ pub async fn list_chats(
 }
 
 pub async fn get_messages(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path(chat_id): Path<String>,
 ) -> Result<Json<Vec<Message>>, AppError> {
@@ -146,7 +146,7 @@ pub async fn get_messages(
 }
 
 pub async fn delete_chat(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path(chat_id): Path<String>,
 ) -> Result<Json<()>, AppError> {
@@ -202,7 +202,7 @@ pub async fn delete_chat(
 }
 
 pub async fn update_chat(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path(chat_id): Path<String>,
     Json(payload): Json<UpdateChatPayload>,
@@ -251,7 +251,7 @@ pub async fn update_chat(
 
     if let Some(pinned) = payload.pinned {
         query_parts.push(format!("pinned = ${}", param_index));
-        params.push(if pinned { "1" } else { "0" }.to_string());
+        params.push(pinned.to_string());
         param_index += 1;
     }
 
@@ -277,7 +277,7 @@ pub async fn update_chat(
 }
 
 pub async fn bulk_insert_messages(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path(chat_id): Path<String>,
     Json(payload): Json<BulkMessagesPayload>,
@@ -318,7 +318,7 @@ pub async fn bulk_insert_messages(
 }
 
 pub async fn update_message(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path((chat_id, message_id)): Path<(String, String)>,
     Json(payload): Json<UpdateMessagePayload>,
@@ -351,7 +351,7 @@ pub async fn update_message(
 }
 
 pub async fn delete_message_and_subsequent(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path((chat_id, message_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<String>>, AppError> {
@@ -402,7 +402,7 @@ pub async fn delete_message_and_subsequent(
 }
 
 pub async fn delete_subsequent_messages(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path((chat_id, message_id)): Path<(String, String)>,
 ) -> Result<Json<Vec<String>>, AppError> {
@@ -453,7 +453,7 @@ pub async fn delete_subsequent_messages(
 }
 
 pub async fn delete_single_message(
-    State(pool): State<SqlitePool>,
+    State(pool): State<PgPool>,
     claims: Claims,
     Path((chat_id, message_id)): Path<(String, String)>,
 ) -> Result<Json<()>, AppError> {
