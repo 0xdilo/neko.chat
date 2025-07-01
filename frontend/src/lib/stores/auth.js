@@ -74,6 +74,8 @@ export async function logout() {
 
     if (browser) {
       localStorage.removeItem("neko-auth-token");
+      // Force redirect to auth page
+      window.location.href = "/auth";
     }
 
     return { success: true };

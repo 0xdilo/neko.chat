@@ -1,9 +1,14 @@
 import { browser } from "$app/environment";
 import { showError, showWarning } from "$lib/stores/app.js";
 
-const API_BASE_URL = browser
-  ? window.location.origin.replace(":5173", ":8080")
-  : "http://localhost:8080";
+function getApiBaseUrl() {
+  if (browser && typeof window !== "undefined") {
+    return window.location.origin.replace(":5173", ":8080");
+  }
+  return "http://localhost:8080";
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 class APIClient {
   constructor(baseURL = API_BASE_URL) {

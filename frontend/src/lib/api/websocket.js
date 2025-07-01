@@ -365,11 +365,13 @@ export const websocket = {
   isConnecting: () => wsClient.isConnecting(),
 };
 
-// Auto-connect when browser is available
-if (browser && typeof window !== "undefined") {
-  // Connect when authentication is available
-  const token = localStorage.getItem("neko-auth-token");
-  if (token) {
-    websocket.connect();
+// Auto-connect function to be called from components
+export function autoConnectWebSocket() {
+  if (browser && typeof window !== "undefined") {
+    // Connect when authentication is available
+    const token = localStorage.getItem("neko-auth-token");
+    if (token) {
+      websocket.connect();
+    }
   }
 }

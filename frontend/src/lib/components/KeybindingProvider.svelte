@@ -15,7 +15,9 @@
 	let statusTimeout;
 
 	onMount(() => {
-		keybindingSystem = createKeybindingSystem();
+		if (typeof window !== "undefined") {
+			keybindingSystem = createKeybindingSystem();
+		}
 
 		if (typeof window !== "undefined") {
 			window.addEventListener("toggle-sidebar", handleToggleSidebar);
@@ -44,7 +46,7 @@
 	});
 
 	onDestroy(() => {
-		if (keybindingSystem) {
+		if (keybindingSystem && typeof window !== "undefined") {
 			keybindingSystem.destroy();
 		}
 

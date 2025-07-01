@@ -120,11 +120,15 @@
 	}
 	
 	onMount(() => {
-		document.addEventListener('keydown', handleKeydown);
+		if (typeof document !== "undefined") {
+			document.addEventListener('keydown', handleKeydown);
+		}
 	});
 	
 	onDestroy(() => {
-		document.removeEventListener('keydown', handleKeydown);
+		if (typeof document !== "undefined") {
+			document.removeEventListener('keydown', handleKeydown);
+		}
 	});
 	
 	function highlightMatch(text, term) {

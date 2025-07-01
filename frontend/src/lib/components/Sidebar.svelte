@@ -144,16 +144,18 @@
 		}
 
 		// Don't interfere when typing in search
-		if (document.activeElement === searchInput) {
+		if (typeof document !== "undefined" && document.activeElement === searchInput) {
 			return;
 		}
 
 		// Don't interfere when typing in chat input or if model selector is open
-		const chatInput = document.getElementById('chat-input');
-		const modelSelectorOpen = document.querySelector('.model-selector-dropdown');
-		
-		if (document.activeElement === chatInput || modelSelectorOpen) {
-			return;
+		if (typeof document !== "undefined") {
+			const chatInput = document.getElementById('chat-input');
+			const modelSelectorOpen = document.querySelector('.model-selector-dropdown');
+			
+			if (document.activeElement === chatInput || modelSelectorOpen) {
+				return;
+			}
 		}
 
 		switch (event.key) {
@@ -189,7 +191,9 @@
 				selectChat(item.id);
 				break;
 			case 'settings':
-				window.location.href = '/settings';
+				if (typeof window !== "undefined") {
+					window.location.href = '/settings';
+				}
 				break;
 			case 'logout':
 				handleLogout();
@@ -216,7 +220,6 @@
 	function formatChatTitle(chat) {
 		// Check both the database flag and legacy title prefix for backward compatibility
 		const isBranchFromFlag = chat.isBranch || chat.is_branch || false;
-		console.log("penis")
 		const isBranchFromTitle = chat.title.startsWith("Branch from: ");
 		
 		return {

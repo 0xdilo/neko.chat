@@ -7,6 +7,7 @@ export * from "./app.js";
 
 export { theme, themes } from "../theme.js";
 
+import { browser } from "$app/environment";
 import { initializeChats } from "./chats.js";
 import { initializeModels } from "./models.js";
 import {
@@ -19,7 +20,9 @@ import { initializeAuth } from "./auth.js";
 export function initializeStores() {
   initializeChats();
   initializeSettings();
-  initializeAuth();
+  if (browser) {
+    initializeAuth();
+  }
 }
 
 export async function initializeModelsAfterAuth() {
