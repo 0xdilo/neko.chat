@@ -665,18 +665,12 @@ async function handleKeydown(e) {
 						streaming: true,
 					});
 				},
-				onComplete: async () => {
+				onComplete: async (finalContent) => {
 					updateMessageInActiveChat(assistantMessageId, {
+						content: finalContent,
 						streaming: false,
 					});
 					abortControllers.delete($currentChat.id);
-
-					try {
-						const messages = await chatAPI.getMessages($currentChat.id);
-						activeChatMessages.set(messages);
-					} catch (err) {
-						console.warn("Failed to reload messages after retry:", err);
-					}
 				},
 				onError: (error) => {
 					console.error("Streaming error:", error);

@@ -295,6 +295,25 @@ impl OpenAIClient {
             client: Client::new(),
         }
     }
+
+    fn separate_system_messages(&self, messages: Vec<Value>) -> (Option<String>, Vec<Value>) {
+        let mut system_prompt = None;
+        let mut user_messages = Vec::new();
+
+        for message in messages {
+            if let Some(role) = message.get("role").and_then(|r| r.as_str()) {
+                if role == "system" {
+                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
+                        system_prompt = Some(content.to_string());
+                    }
+                } else {
+                    user_messages.push(message);
+                }
+            }
+        }
+
+        (system_prompt, user_messages)
+    }
 }
 
 #[derive(Deserialize)]
@@ -501,13 +520,13 @@ impl LLMClient for OpenAIClient {
 
         let stream = async_stream::stream! {
             let mut inner_stream = byte_stream;
-            let mut buffer = Vec::new();
+            let mut buffer = Vec::with_capacity(8192); // Pre-allocate buffer
 
             while let Some(chunk_result) = inner_stream.next().await {
                 let chunk = match chunk_result {
                     Ok(c) => c,
                     Err(e) => {
-                        tracing::error!("stream chunk error: {}", e);
+                        tracing::error!("OpenAI stream chunk error: {}", e);
                         yield Err(AppError::InternalServerError);
                         break;
                     }
@@ -542,6 +561,12 @@ impl LLMClient for OpenAIClient {
                     buffer.drain(..start);
                 } else {
                     buffer.clear();
+                }
+                
+                // Prevent buffer from growing too large
+                if buffer.len() > 32768 {
+                    buffer.clear();
+                    tracing::warn!("OpenAI stream buffer overflow, clearing");
                 }
             }
         };
@@ -1399,7 +1424,6 @@ impl LLMClient for GeminiClient {
         }
 
         let byte_stream = response.bytes_stream();
-
 
         let stream = async_stream::stream! {
             let mut inner_stream = byte_stream;

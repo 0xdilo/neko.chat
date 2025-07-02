@@ -1,24 +1,20 @@
 import { redirect } from '@sveltejs/kit';
 import { browser } from '$app/environment';
+import { initializeStores } from '$lib/stores/index.js';
+import { refreshAuth } from '$lib/stores/auth.js';
 
 const protectedRoutes = ['/', '/settings'];
 
-export async function load({ url }) {
-  const currentPath = url.pathname;
-  const isProtectedRoute = protectedRoutes.includes(currentPath);
+export const load = async ({ url }) => {
+  // Initialize stores immediately (non-blocking)
+  initializeStores();
   
-  // Only check auth on client side and for protected routes
-  if (browser && isProtectedRoute) {
-    const token = localStorage.getItem('neko-auth-token');
-    if (!token) {
-      throw redirect(302, '/auth');
-    }
-  }
-  
-  // Don't redirect from /auth on server side - let client handle it
-  
+  // Start auth refresh in background - don't await to avoid blocking page load
+  refreshAuth().catch(error => {
+    console.warn('Background auth refresh failed:', error);
+  });
+
   return {
-    currentPath,
-    isProtectedRoute
+    url: url.pathname
   };
-}
+};

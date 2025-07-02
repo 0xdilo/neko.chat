@@ -92,6 +92,44 @@ export function buildChatTree(chatList) {
   chatTree.set(tree);
 }
 
+// Optimized function to update tree incrementally
+function updateChatInTree(chat, isDelete = false) {
+  chatTree.update((currentTree) => {
+    const newTree = { ...currentTree };
+    
+    if (isDelete) {
+      // Remove chat and its children from tree
+      delete newTree[chat.id];
+      // Also remove from parent's children if it's a branch
+      if (chat.parentChatId && newTree[chat.parentChatId]) {
+        newTree[chat.parentChatId].children = newTree[chat.parentChatId].children.filter(
+          child => child.id !== chat.id
+        );
+      }
+    } else {
+      // Add or update chat in tree
+      const chatWithChildren = { ...chat, children: currentTree[chat.id]?.children || [] };
+      
+      if (chat.parentChatId && newTree[chat.parentChatId]) {
+        // It's a branch - add to parent's children
+        const parentChildren = newTree[chat.parentChatId].children || [];
+        const existingIndex = parentChildren.findIndex(child => child.id === chat.id);
+        if (existingIndex >= 0) {
+          parentChildren[existingIndex] = chatWithChildren;
+        } else {
+          parentChildren.push(chatWithChildren);
+        }
+        newTree[chat.parentChatId].children = parentChildren;
+      } else {
+        // Root level chat
+        newTree[chat.id] = chatWithChildren;
+      }
+    }
+    
+    return newTree;
+  });
+}
+
 // Create a new chat
 export async function createChat(chatData = {}) {
   isLoading.set(true);
@@ -118,7 +156,8 @@ export async function createChat(chatData = {}) {
 
     chats.update((chatList) => {
       const updatedList = [newChat, ...chatList];
-      buildChatTree(updatedList);
+      // Use incremental update instead of full rebuild for single chat
+      updateChatInTree(newChat);
       return updatedList;
     });
     await setActiveChat(newChat.id);
@@ -176,11 +215,17 @@ export async function deleteChat(chatId) {
   try {
     await chatAPI.deleteChat(chatId);
 
-    // Update chats store and rebuild tree
+    // Get the chat being deleted for tree update
+    const currentChats = get(chats);
+    const deletedChat = currentChats.find(chat => chat.id === chatId);
+
+    // Update chats store and tree incrementally
     chats.update((chatList) => {
       const updatedChatList = chatList.filter((chat) => chat.id !== chatId);
-      // Rebuild tree with updated chat list
-      buildChatTree(updatedChatList);
+      // Use incremental update instead of full rebuild
+      if (deletedChat) {
+        updateChatInTree(deletedChat, true);
+      }
       return updatedChatList;
     });
 
@@ -360,13 +405,18 @@ export async function sendMessage(content, options = {}) {
     },
   }));
 
+  // Throttle UI updates to reduce churn
+  let lastUpdateTime = 0;
+  const UPDATE_THROTTLE_MS = 50; // Update UI at most every 50ms
+  let pendingContent = "";
+
   try {
     // Stream message response
     await chatAPI.streamMessage(currentChatId, content, {
       webSearch: options.webSearch,
       onStart: options.onStart,
       onChunk: (chunk, accumulatedContent) => {
-        // Update global streaming state
+        // Update global streaming state immediately
         streamingMessages.update((messages) => ({
           ...messages,
           [currentChatId]: {
@@ -375,17 +425,25 @@ export async function sendMessage(content, options = {}) {
           },
         }));
 
-        // Update the assistant message with accumulated streaming content
-        updateMessageInActiveChat(assistantMessageId, {
-          content: accumulatedContent,
-          streaming: true,
-        });
+        // Throttle UI updates
+        pendingContent = accumulatedContent;
+        const now = Date.now();
+        if (now - lastUpdateTime >= UPDATE_THROTTLE_MS) {
+          lastUpdateTime = now;
+          updateMessageInActiveChat(assistantMessageId, {
+            content: pendingContent,
+            streaming: true,
+          });
+        }
       },
       onComplete: async () => {
-        // Mark streaming as complete
-        updateMessageInActiveChat(assistantMessageId, {
-          streaming: false,
-        });
+        // Final update with any pending content
+        if (pendingContent) {
+          updateMessageInActiveChat(assistantMessageId, {
+            content: pendingContent,
+            streaming: false,
+          });
+        }
 
         // Clean up global streaming state
         streamingChats.update((set) => {

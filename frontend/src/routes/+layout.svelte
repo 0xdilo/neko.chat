@@ -5,6 +5,7 @@
   import { theme } from '$lib/theme.js';
   import { initializeStores, initializeModelsAfterAuth } from '$lib/stores/index.js';
   import { refreshAuth, isAuthenticated } from '$lib/stores/auth.js';
+  import { loadApiKeysFromBackend } from '$lib/stores/settings.js';
   import { autoConnectWebSocket } from '$lib/api/websocket.js';
   import KeybindingProvider from '$lib/components/KeybindingProvider.svelte';
 
@@ -33,16 +34,29 @@
 
   onMount(async () => {
     theme.init();
-    initializeStores();
     
-    await refreshAuth();
-    authChecked = true;
-    
-    if ($isAuthenticated) {
-      initializeModelsAfterAuth().then(() => {
-        modelsInitialized = true;
-      });
-      autoConnectWebSocket();
+    // Progressive loading - start with essential features first
+    try {
+      // Essential: Check if user is already authenticated
+      const authResult = await refreshAuth();
+      authChecked = true;
+      
+      if (authResult && authResult.success) {
+        // User is authenticated - load user-specific data in background
+        Promise.all([
+          loadApiKeysFromBackend(),
+          initializeModelsAfterAuth()
+        ]).then(() => {
+          modelsInitialized = true;
+          // Auto-connect WebSocket after user data is loaded
+          autoConnectWebSocket();
+        }).catch(error => {
+          console.warn('Background initialization failed:', error);
+        });
+      }
+    } catch (error) {
+      console.warn('Auth initialization failed:', error);
+      authChecked = true;
     }
   });
 </script>
@@ -89,4 +103,3 @@
     100% { transform: rotate(360deg); }
   }
 </style>
-

@@ -211,6 +211,22 @@ async fn main() {
 
     tracing::info!("database schema initialized");
 
+    // Add performance indexes
+    let index_statements = vec![
+        "CREATE INDEX IF NOT EXISTS idx_system_prompts_user_default ON system_prompts(user_id, is_default)",
+        "CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_chats_user_created ON chats(user_id, created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_user_models_user_enabled ON user_models(user_id, is_enabled)",
+    ];
+
+    for statement in index_statements {
+        if let Err(e) = sqlx::query(statement).execute(&db_pool).await {
+            tracing::warn!("Index creation failed (may already exist): {}", e);
+        }
+    }
+
+    tracing::info!("database indexes created");
+
     let migration_result =
         sqlx::query("ALTER TABLE chats ADD COLUMN IF NOT EXISTS is_branch BOOLEAN DEFAULT false")
             .execute(&db_pool)
@@ -249,7 +265,8 @@ async fn main() {
 
     tracing::info!("all migrations completed");
 
-    let (tx, _) = broadcast::channel::<Message>(100);
+    // Create broadcast channel for WebSocket messages with higher capacity
+    let (tx, _rx) = broadcast::channel::<Message>(1000); // Increased from 100
 
     let app_state = AppState {
         db_pool,

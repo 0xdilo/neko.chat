@@ -239,35 +239,24 @@ pub async fn stream_message(
     let tx = app_state.tx.clone();
     let encryption_key = app_state.config.encryption_key.clone();
 
-    // --- 1. Fast validation and prep (minimize DB queries before streaming) ---
-    // Validate chat ownership first with minimal query
-    let chat_exists = match sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM chats WHERE id = $1 AND user_id = $2",
-    )
-    .bind(&chat_id)
-    .bind(&user_id)
-    .fetch_one(&pool)
-    .await
-    {
-        Ok(count) => count > 0,
-        Err(_) => false,
-    };
-
-    if !chat_exists {
-        return AppError::NotFound.into_response();
-    }
-
-    // Get essential chat info for streaming
-    let (chat_provider, chat_model) = match sqlx::query_as::<_, (String, String)>(
-        "SELECT provider, model FROM chats WHERE id = $1",
+    // --- 1. Fast validation and prep (combine queries to reduce round trips) ---
+    let chat_info = match sqlx::query_as::<_, (String, String, String)>(
+        "SELECT user_id, provider, model FROM chats WHERE id = $1",
     )
     .bind(&chat_id)
     .fetch_one(&pool)
     .await
     {
-        Ok((provider, model)) => (provider, model),
+        Ok((owner_id, provider, model)) => {
+            if owner_id != user_id {
+                return AppError::Unauthorized.into_response();
+            }
+            (provider, model)
+        }
         Err(_) => return AppError::NotFound.into_response(),
     };
+
+    let (chat_provider, chat_model) = chat_info;
 
     // Get API key early
     let api_key = match get_decrypted_key(&pool, &user_id, &chat_provider, &encryption_key).await {
@@ -435,6 +424,25 @@ pub async fn stream_message(
                 pool: sqlx::PgPool,
                 chat_id: String,
                 tx: tokio::sync::broadcast::Sender<Message>,
+                max_size: usize, // Add memory limit
+            }
+
+            impl ContentSaver {
+                fn add_content(&mut self, chunk: &str) {
+                    // Prevent unbounded memory growth
+                    if self.content.len() + chunk.len() <= self.max_size {
+                        self.content.push_str(chunk);
+                        self.has_streamed = true;
+                    } else if !self.has_streamed {
+                        // If we haven't streamed anything yet, take what we can
+                        let remaining = self.max_size.saturating_sub(self.content.len());
+                        if remaining > 0 {
+                            self.content.push_str(&chunk[..remaining.min(chunk.len())]);
+                            self.has_streamed = true;
+                        }
+                        tracing::warn!("ContentSaver: Memory limit reached, truncating content");
+                    }
+                }
             }
 
             impl Drop for ContentSaver {
@@ -477,14 +485,14 @@ pub async fn stream_message(
                 pool: saver_pool,
                 chat_id: chat_id,
                 tx: saver_tx,
+                max_size: 1024 * 1024, // 1MB limit
             };
 
             let mut stream = std::pin::pin!(response_stream);
             while let Some(result) = stream.next().await {
                 if let Ok(chunk) = &result {
                     if !chunk.starts_with("ERROR:") {
-                        saver.content.push_str(chunk);
-                        saver.has_streamed = true;
+                        saver.add_content(chunk);
                     }
                 }
                 yield result;

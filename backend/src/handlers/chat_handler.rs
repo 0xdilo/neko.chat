@@ -221,57 +221,66 @@ pub async fn update_chat(
     }
 
     // Build update query dynamically based on provided fields
-    let mut query_parts = Vec::new();
-    let mut params: Vec<String> = Vec::new();
-    let mut param_index = 1;
+    let mut query_builder = sqlx::QueryBuilder::new("UPDATE chats SET ");
+    let mut has_updates = false;
 
     if let Some(title) = payload.title {
-        query_parts.push(format!("title = ${}", param_index));
-        params.push(title);
-        param_index += 1;
+        if has_updates {
+            query_builder.push(", ");
+        }
+        query_builder.push("title = ");
+        query_builder.push_bind(title);
+        has_updates = true;
     }
 
     if let Some(system_prompt) = payload.system_prompt {
-        query_parts.push(format!("system_prompt = ${}", param_index));
-        params.push(system_prompt);
-        param_index += 1;
+        if has_updates {
+            query_builder.push(", ");
+        }
+        query_builder.push("system_prompt = ");
+        query_builder.push_bind(system_prompt);
+        has_updates = true;
     }
 
     if let Some(provider) = payload.provider {
-        query_parts.push(format!("provider = ${}", param_index));
-        params.push(provider);
-        param_index += 1;
+        if has_updates {
+            query_builder.push(", ");
+        }
+        query_builder.push("provider = ");
+        query_builder.push_bind(provider);
+        has_updates = true;
     }
 
     if let Some(model) = payload.model {
-        query_parts.push(format!("model = ${}", param_index));
-        params.push(model);
-        param_index += 1;
+        if has_updates {
+            query_builder.push(", ");
+        }
+        query_builder.push("model = ");
+        query_builder.push_bind(model);
+        has_updates = true;
     }
 
     if let Some(pinned) = payload.pinned {
-        query_parts.push(format!("pinned = ${}", param_index));
-        params.push(pinned.to_string());
-        param_index += 1;
+        if has_updates {
+            query_builder.push(", ");
+        }
+        query_builder.push("pinned = ");
+        query_builder.push_bind(pinned); // Use the boolean directly
+        has_updates = true;
     }
 
-    if query_parts.is_empty() {
+    if !has_updates {
         return Err(AppError::BadRequest("No fields to update".to_string()));
     }
 
-    let query = format!(
-        "UPDATE chats SET {} WHERE id = ${} RETURNING *",
-        query_parts.join(", "),
-        param_index
-    );
-    params.push(chat_id);
+    query_builder.push(" WHERE id = ");
+    query_builder.push_bind(chat_id);
+    query_builder.push(" RETURNING *");
 
-    let mut query_builder = sqlx::query_as::<_, Chat>(&query);
-    for param in params {
-        query_builder = query_builder.bind(param);
-    }
-
-    let updated_chat = query_builder.fetch_one(&pool).await?;
+    let updated_chat = query_builder
+        .build_query_as::<Chat>()
+        .fetch_one(&pool)
+        .await?;
 
     Ok(Json(updated_chat))
 }
@@ -295,24 +304,28 @@ pub async fn bulk_insert_messages(
         return Err(AppError::Unauthorized);
     }
 
-    let mut inserted_messages = Vec::new();
-
-    // Insert messages one by one to maintain order and get proper IDs
-    for message_payload in payload.messages {
-        let message_id = Uuid::new_v4().to_string();
-
-        let message = sqlx::query_as::<_, Message>(
-            "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, $3, $4) RETURNING *",
-        )
-        .bind(message_id)
-        .bind(&chat_id)
-        .bind(message_payload.role)
-        .bind(message_payload.content)
-        .fetch_one(&pool)
-        .await?;
-
-        inserted_messages.push(message);
+    if payload.messages.is_empty() {
+        return Ok(Json(vec![]));
     }
+
+    // Use batch insert for better performance
+    let mut query_builder = sqlx::QueryBuilder::new(
+        "INSERT INTO messages (id, chat_id, role, content) "
+    );
+
+    query_builder.push_values(payload.messages.iter(), |mut b, message_payload| {
+        b.push_bind(Uuid::new_v4().to_string())
+         .push_bind(&chat_id)
+         .push_bind(&message_payload.role)
+         .push_bind(&message_payload.content);
+    });
+
+    query_builder.push(" RETURNING *");
+
+    let inserted_messages = query_builder
+        .build_query_as::<Message>()
+        .fetch_all(&pool)
+        .await?;
 
     Ok(Json(inserted_messages))
 }
@@ -368,37 +381,29 @@ pub async fn delete_message_and_subsequent(
         return Err(AppError::Unauthorized);
     }
 
-    // Get the message being deleted to find its timestamp
-    let target_message: (String,) = sqlx::query_as(
-        "SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2"
+    // Get IDs of messages to delete and delete them in one query
+    let deleted_ids: Vec<(String,)> = sqlx::query_as(
+        r#"
+        WITH target_message AS (
+            SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2
+        )
+        DELETE FROM messages 
+        WHERE chat_id = $2 
+        AND created_at >= (SELECT created_at FROM target_message)
+        RETURNING id
+        "#
     )
     .bind(&message_id)
     .bind(&chat_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|_| AppError::NotFound)?;
-
-    // Get all messages from this timestamp onwards (including the target message)
-    let messages_to_delete: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM messages WHERE chat_id = $1 AND created_at >= $2 ORDER BY created_at ASC"
-    )
-    .bind(&chat_id)
-    .bind(&target_message.0)
     .fetch_all(&pool)
     .await?;
 
-    let deleted_ids: Vec<String> = messages_to_delete.iter().map(|(id,)| id.clone()).collect();
+    if deleted_ids.is_empty() {
+        return Err(AppError::NotFound);
+    }
 
-    // Delete all messages from the target timestamp onwards
-    sqlx::query(
-        "DELETE FROM messages WHERE chat_id = $1 AND created_at >= $2"
-    )
-    .bind(&chat_id)
-    .bind(&target_message.0)
-    .execute(&pool)
-    .await?;
-
-    Ok(Json(deleted_ids))
+    let result: Vec<String> = deleted_ids.into_iter().map(|(id,)| id).collect();
+    Ok(Json(result))
 }
 
 pub async fn delete_subsequent_messages(
@@ -419,37 +424,25 @@ pub async fn delete_subsequent_messages(
         return Err(AppError::Unauthorized);
     }
 
-    // Get the message timestamp
-    let target_message: (String,) = sqlx::query_as(
-        "SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2"
+    // Get IDs of messages to delete and delete them in one query
+    let deleted_ids: Vec<(String,)> = sqlx::query_as(
+        r#"
+        WITH target_message AS (
+            SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2
+        )
+        DELETE FROM messages 
+        WHERE chat_id = $2 
+        AND created_at > (SELECT created_at FROM target_message)
+        RETURNING id
+        "#
     )
     .bind(&message_id)
     .bind(&chat_id)
-    .fetch_one(&pool)
-    .await
-    .map_err(|_| AppError::NotFound)?;
-
-    // Get all messages AFTER this timestamp (excluding the target message)
-    let messages_to_delete: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM messages WHERE chat_id = $1 AND created_at > $2 ORDER BY created_at ASC"
-    )
-    .bind(&chat_id)
-    .bind(&target_message.0)
     .fetch_all(&pool)
     .await?;
 
-    let deleted_ids: Vec<String> = messages_to_delete.iter().map(|(id,)| id.clone()).collect();
-
-    // Delete all messages AFTER the target timestamp (not including the target message)
-    sqlx::query(
-        "DELETE FROM messages WHERE chat_id = $1 AND created_at > $2"
-    )
-    .bind(&chat_id)
-    .bind(&target_message.0)
-    .execute(&pool)
-    .await?;
-
-    Ok(Json(deleted_ids))
+    let result: Vec<String> = deleted_ids.into_iter().map(|(id,)| id).collect();
+    Ok(Json(result))
 }
 
 pub async fn delete_single_message(
