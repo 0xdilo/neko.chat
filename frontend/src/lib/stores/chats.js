@@ -400,16 +400,8 @@ export async function sendMessage(content, options = {}) {
           return updated;
         });
 
-        // Reload messages from database only if this is the active chat
-        try {
-          const messages = await chatAPI.getMessages(currentChatId);
-          // Only update activeChatMessages if this is still the active chat
-          if (get(activeChat) === currentChatId) {
-            activeChatMessages.set(messages);
-          }
-        } catch (err) {
-          console.warn("Failed to reload messages after streaming:", err);
-        }
+        // Don't reload messages immediately - let websocket handle the final message update
+        // The ContentSaver in the backend will send a websocket message with the saved message
       },
       onError: (error) => {
         console.error("Streaming error:", error);

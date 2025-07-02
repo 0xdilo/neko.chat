@@ -50,7 +50,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: String) 
             if let Ok((owner_id,)) = chat_owner_id {
                 if owner_id == user_id {
                     let payload = serde_json::to_string(&msg).unwrap();
-                    if socket.send(WsMessage::Text(payload)).await.is_err() {
+                    if socket.send(WsMessage::Text(payload.into())).await.is_err() {
                         break;
                     }
                 }
