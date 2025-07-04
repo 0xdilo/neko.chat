@@ -69,7 +69,7 @@
 	let selectedModelForBranch = null;
 	let currentSelectedModels = [];
 	let showTopModelSelector = false;
-	let isFirstMessage = false;
+	
 
 	// scroll management state
 	let isAtBottom = true;
@@ -373,9 +373,7 @@ function autoResize(node, _val) {
 		// remember user scroll position before sending
 		const wasAtBottom = isAtBottom;
 
-		if (messages.length === 0) {
-			isFirstMessage = true;
-		}
+		
 
 		try {
 			// Store intended models before any chat operations that might reset currentSelectedModels
@@ -460,7 +458,7 @@ function autoResize(node, _val) {
 			loadingChats.delete(currentChatId);
 			abortControllers.delete(currentChatId);
 			loadingChats = loadingChats; // Trigger reactivity
-			isFirstMessage = false;
+			
 		}
 	}
 
@@ -989,7 +987,7 @@ async function handleKeydown(e) {
 		bind:this={messagesContainer}
 		on:scroll={handleScroll}
 	>
-		{#if messages.length === 0 && !isFirstMessage}
+		{#if messages.length === 0 && !currentChatLoading}
 			<WelcomeMessage onSendMessage={handleWelcomeMessage} />
 		{:else}
 			<div class="messages">
