@@ -32,6 +32,7 @@
 		sendParallelMessage,
 		deleteMessage,
 		buildChatTree,
+		switchToBranch,
 	} from "$lib/stores/chats.js";
 	import { showError, showSuccess } from "$lib/stores/app.js";
 	import { api } from "$lib/api/client.js";
@@ -731,49 +732,43 @@ async function handleKeydown(e) {
 		if (branchingMessageIndex === -1) return;
 
 		try {
-			const messagesToInclude = $activeChatMessages.slice(
-				0,
-				branchingMessageIndex + 1,
-			);
-			const lastMessage = messagesToInclude[messagesToInclude.length - 1];
-
-			const defaultModel = getFirstEnabledModel();
 			const branchPointMessage = $activeChatMessages[branchingMessageIndex];
-			const chatData = {
-				title: $currentChat?.title || "Chat",
-				system_prompt:
-					$currentChat?.system_prompt || "You are a helpful AI assistant.",
-				provider: selectedModel?.provider || $currentChat?.provider || defaultModel.provider,
-				model: selectedModel?.model || $currentChat?.model || defaultModel.model,
-				is_branch: true,
-				parent_chat_id: $currentChat?.id,
-				branch_point_message_id: branchPointMessage?.id,
-			};
-
+			
 			closeBranchModal();
 
-			const newChat = await createChat(chatData);
+			// Use the new backend fork API
+			const newChat = await chatAPI.createFork($currentChat?.id, branchPointMessage.id, {
+				provider: selectedModel?.provider,
+				model: selectedModel?.model,
+				send_message: branchPointMessage.role === "user" // Let backend handle user message addition
+			});
 
-			if (messagesToInclude.length > 0) {
-				const messagesToPersist =
-					lastMessage.role === "user"
-						? messagesToInclude.slice(0, -1)
-						: messagesToInclude;
+			// Switch to the new forked chat
+			await switchToBranch(newChat.id);
 
-				if (messagesToPersist.length > 0) {
-					await chatAPI.bulkInsertMessages(newChat.id, messagesToPersist);
-				}
-
-				const persistedMessages = await chatAPI.getMessages(newChat.id);
-				activeChatMessages.set(persistedMessages);
-
-				if (lastMessage.role === "user") {
-					try {
-						await sendMessage(lastMessage.content);
-					} catch (sendError) {
-						console.error("Failed to send user message:", sendError);
-						showError("Failed to generate response for branched message");
-					}
+			// If we forked a user message, we need to generate a response
+			// The backend already added the user message, so we just need to trigger a response
+			if (branchPointMessage.role === "user") {
+				try {
+					// Use the stream API to generate a response to the last message
+					await chatAPI.streamMessage(newChat.id, branchPointMessage.content, {
+						onStart: (controller) => {
+							// Handle streaming start
+						},
+						onChunk: (chunk, accumulatedContent) => {
+							// The streaming will be handled automatically by the store
+						},
+						onComplete: () => {
+							// Streaming complete
+						},
+						onError: (error) => {
+							console.error("Failed to generate response:", error);
+							showError("Failed to generate response for forked message");
+						}
+					});
+				} catch (error) {
+					console.error("Failed to generate response for forked message:", error);
+					showError("Failed to generate response for forked message");
 				}
 			}
 

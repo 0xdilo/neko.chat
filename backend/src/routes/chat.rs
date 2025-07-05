@@ -43,4 +43,8 @@ pub fn create_chat_routes() -> Router<AppState> {
             "/api/chats/:id/parallel",
             post(llm_handler::parallel_llm_query),
         )
+        .route(
+            "/api/chats/:id/fork",
+            post(chat_handler::create_fork),
+        )
 }

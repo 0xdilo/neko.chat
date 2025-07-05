@@ -274,4 +274,17 @@ export const chatAPI = {
       "Failed to insert messages.",
     );
   },
+
+  async createFork(chatId, messageId, options = {}) {
+    return withErrorHandling(
+      () =>
+        api.post(`/api/chats/${chatId}/fork`, {
+          message_id: messageId,
+          provider: options.provider,
+          model: options.model,
+          send_message: options.send_message,
+        }),
+      "Failed to create fork.",
+    );
+  },
 };

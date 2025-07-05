@@ -48,6 +48,14 @@ pub struct UpdateMessagePayload {
     content: String,
 }
 
+#[derive(Deserialize)]
+pub struct CreateForkPayload {
+    message_id: String,
+    provider: Option<String>,
+    model: Option<String>,
+    send_message: Option<bool>,
+}
+
 pub async fn create_chat(
     State(pool): State<PgPool>,
     claims: Claims,
@@ -484,4 +492,101 @@ pub async fn delete_single_message(
         .await?;
 
     Ok(Json(()))
+}
+
+pub async fn create_fork(
+    State(pool): State<PgPool>,
+    claims: Claims,
+    Path(chat_id): Path<String>,
+    Json(payload): Json<CreateForkPayload>,
+) -> Result<Json<Chat>, AppError> {
+    let user_id = claims.sub;
+    
+    // Verify the user owns this chat
+    let parent_chat: Chat = sqlx::query_as("SELECT * FROM chats WHERE id = $1 AND user_id = $2")
+        .bind(&chat_id)
+        .bind(&user_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    
+    // Get the message we're forking from
+    let fork_message: Message = sqlx::query_as("SELECT * FROM messages WHERE id = $1 AND chat_id = $2")
+        .bind(&payload.message_id)
+        .bind(&chat_id)
+        .fetch_one(&pool)
+        .await
+        .map_err(|_| AppError::NotFound)?;
+    
+    // Get all messages up to and including the fork point
+    let messages: Vec<Message> = sqlx::query_as(
+        "SELECT * FROM messages WHERE chat_id = $1 AND created_at <= $2 ORDER BY created_at ASC"
+    )
+    .bind(&chat_id)
+    .bind(&fork_message.created_at)
+    .fetch_all(&pool)
+    .await?;
+    
+    // Create new branch chat
+    let new_chat_id = Uuid::new_v4().to_string();
+    let new_chat = sqlx::query_as::<_, Chat>(
+        r#"
+        INSERT INTO chats (id, user_id, title, system_prompt, provider, model, pinned, is_branch, parent_chat_id, branch_point_message_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        RETURNING *
+        "#,
+    )
+    .bind(&new_chat_id)
+    .bind(&user_id)
+    .bind(&parent_chat.title)
+    .bind(&parent_chat.system_prompt)
+    .bind(payload.provider.unwrap_or(parent_chat.provider))
+    .bind(payload.model.unwrap_or(parent_chat.model))
+    .bind(false)
+    .bind(true)
+    .bind(&chat_id)
+    .bind(&payload.message_id)
+    .fetch_one(&pool)
+    .await?;
+    
+    // Copy messages to new chat, excluding the fork message if it's a user message and we want to resend it
+    let should_resend = payload.send_message.unwrap_or(true) && fork_message.role == "user";
+    let messages_to_copy: Vec<_> = if should_resend {
+        // Don't copy the fork message itself - we'll send it fresh
+        messages.into_iter().filter(|m| m.id != fork_message.id).collect()
+    } else {
+        messages
+    };
+    
+    // Insert messages into new chat
+    for message in messages_to_copy {
+        let new_message_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO messages (id, chat_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(new_message_id)
+        .bind(&new_chat_id)
+        .bind(&message.role)
+        .bind(&message.content)
+        .bind(&message.created_at)
+        .execute(&pool)
+        .await?;
+    }
+    
+    // If we should resend the fork message, add it to the new chat
+    if should_resend {
+        let new_message_id = Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO messages (id, chat_id, role, content, created_at) VALUES ($1, $2, $3, $4, $5)"
+        )
+        .bind(new_message_id)
+        .bind(&new_chat_id)
+        .bind(&fork_message.role)
+        .bind(&fork_message.content)
+        .bind(chrono::Utc::now())
+        .execute(&pool)
+        .await?;
+    }
+    
+    Ok(Json(new_chat))
 }
