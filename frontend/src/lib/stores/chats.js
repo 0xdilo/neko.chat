@@ -1,5 +1,6 @@
 import { writable, derived, get } from "svelte/store";
 import { browser } from "$app/environment";
+import { goto } from "$app/navigation";
 import { chatAPI } from "$lib/api/chats.js";
 import { showError, showSuccess } from "./app.js";
 import { rightSidebarCollapsed } from "./ui.js";
@@ -46,28 +47,43 @@ export const chatTree = writable({});
 export const streamingChats = writable(new Set());
 export const streamingMessages = writable({}); // Store streaming messages by chat ID
 
+// Track if loadChats has been called to prevent multiple simultaneous calls
+let loadChatsPromise = null;
+
 // Load chats from API
 export async function loadChats() {
-  isLoading.set(true);
-  error.set(null);
-
-  try {
-    const chatList = await chatAPI.getChats();
-    chats.set(chatList);
-    buildChatTree(chatList);
-
-    // Set the most recent chat as active if none is set
-    if (chatList.length > 0) {
-      const mostRecent = chatList[0]; // Already sorted by backend
-      await setActiveChat(mostRecent.id);
-    }
-  } catch (err) {
-    console.error("Failed to load chats:", err);
-    error.set(err.message);
-    showError("Failed to load chats");
-  } finally {
-    isLoading.set(false);
+  // If already loading, return the existing promise
+  if (loadChatsPromise) {
+    return loadChatsPromise;
   }
+
+  loadChatsPromise = (async () => {
+    isLoading.set(true);
+    error.set(null);
+
+    try {
+      const chatList = await chatAPI.getChats();
+      chats.set(chatList);
+      buildChatTree(chatList);
+
+      // Only set the most recent chat as active if no chat is currently active
+      // This prevents overriding URL-based chat selection on page refresh
+      const currentActiveChat = get(activeChat);
+      if (chatList.length > 0 && !currentActiveChat) {
+        const mostRecent = chatList[0]; // Already sorted by backend
+        await setActiveChat(mostRecent.id, false, true);
+      }
+    } catch (err) {
+      console.error("Failed to load chats:", err);
+      error.set(err.message);
+      showError("Failed to load chats");
+    } finally {
+      isLoading.set(false);
+      loadChatsPromise = null; // Reset for future calls
+    }
+  })();
+
+  return loadChatsPromise;
 }
 
 // Build tree structure from flat chat list
@@ -173,10 +189,13 @@ export async function createChat(chatData = {}) {
 }
 
 // Set active chat and load its messages
-export async function setActiveChat(chatId, preserveMessages = false) {
+export async function setActiveChat(chatId, preserveMessages = false, updateUrl = true) {
   if (!chatId) {
     activeChat.set(null);
     activeChatMessages.set([]);
+    if (updateUrl && browser) {
+      goto('/');
+    }
     return;
   }
 
@@ -184,6 +203,11 @@ export async function setActiveChat(chatId, preserveMessages = false) {
     activeChatMessages.set([]);
   }
   activeChat.set(chatId);
+
+  // Update URL to reflect the active chat
+  if (updateUrl && browser) {
+    goto(`/chat/${chatId}`);
+  }
 
   try {
     const messages = await chatAPI.getMessages(chatId);
@@ -242,6 +266,10 @@ export async function deleteChat(chatId) {
       if (currentChats.length > 0) {
         await setActiveChat(currentChats[0].id);
       } else {
+        // No chats left, navigate to root
+        if (browser) {
+          goto('/');
+        }
         activeChat.set(null);
         activeChatMessages.set([]);
       }
@@ -796,120 +824,27 @@ async function startBranchStreaming(chatId, content) {
 
 // Switch to a different branch
 export async function switchToBranch(chatId) {
-  const isStreaming = get(streamingChats).has(chatId);
-  const streamingData = get(streamingMessages)[chatId];
-
-  if (isStreaming && streamingData) {
-    // For streaming chats, preserve current messages and manually manage the switch
-    activeChat.set(chatId);
-
-    // Check if we have messages loaded
-    const messages = get(activeChatMessages);
-
-    // Check if the streaming messages are already in the UI
-    const hasUserMessage = messages.some(
-      (msg) => msg.id === streamingData.userMessage.id,
-    );
-    const hasStreamingMessage = messages.some(
-      (msg) => msg.id === streamingData.assistantMessageId,
-    );
-
-    // Load messages from database first
-    try {
-      const dbMessages = await chatAPI.getMessages(chatId);
-
-      // Check if streaming messages are already in database
-      const userInDb = dbMessages.some(
-        (msg) =>
-          msg.role === "user" &&
-          msg.content === streamingData.userMessage.content,
-      );
-      const assistantInDb = dbMessages.some(
-        (msg) =>
-          msg.role === "assistant" &&
-          msg.id === streamingData.assistantMessageId,
-      );
-
-      let currentMessages = [...dbMessages];
-
-      // Only add streaming messages if they're not already in the database
-      if (!userInDb) {
-        currentMessages.push(streamingData.userMessage);
-      }
-
-      if (!assistantInDb) {
-        const assistantMessage = {
-          ...streamingData.assistantMessage,
-          content: streamingData.content || "",
-          streaming: true,
-        };
-        currentMessages.push(assistantMessage);
-      } else {
-        // Update existing message in database with streaming content
-        currentMessages = currentMessages.map((msg) =>
-          msg.role === "assistant" &&
-          msg.id !== streamingData.assistantMessageId
-            ? msg
-            : msg.role === "assistant"
-              ? {
-                  ...msg,
-                  content: streamingData.content || "",
-                  streaming: true,
-                }
-              : msg,
-        );
-      }
-
-      activeChatMessages.set(currentMessages);
-    } catch (err) {
-      console.error("Failed to load messages for streaming chat:", err);
-      // Fallback to just showing streaming messages
-      activeChatMessages.set([
-        streamingData.userMessage,
-        {
-          ...streamingData.assistantMessage,
-          content: streamingData.content || "",
-          streaming: true,
-        },
-      ]);
-    }
-
-    // Set up a reactive subscription to update UI when streaming content changes
-    const unsubscribe = streamingMessages.subscribe((messages) => {
-      const currentStreamingData = messages[chatId];
-      if (currentStreamingData && get(activeChat) === chatId) {
-        updateMessageInActiveChat(streamingData.assistantMessageId, {
-          content: currentStreamingData.content || "",
-          streaming: true,
-        });
-      }
-    });
-
-    // Clean up subscription when streaming completes or chat changes
-    const originalStreamingChats = get(streamingChats);
-    if (originalStreamingChats.has(chatId)) {
-      const checkComplete = setInterval(() => {
-        const currentStreamingChats = get(streamingChats);
-        const currentActiveChat = get(activeChat);
-        if (
-          !currentStreamingChats.has(chatId) ||
-          currentActiveChat !== chatId
-        ) {
-          unsubscribe();
-          clearInterval(checkComplete);
-        }
-      }, 100);
-    }
-  } else {
-    // For non-streaming chats, use normal setActiveChat
-    await setActiveChat(chatId);
+  // Simply navigate to the chat URL and let SvelteKit's routing handle the rest
+  if (browser) {
+    goto(`/chat/${chatId}`);
   }
+}
+
+// Track if chats have been initialized to prevent re-initialization
+let chatsInitialized = false;
+
+// Function to reset the initialization flag, e.g., on logout
+export function resetChatsInitialized() {
+  chatsInitialized = false;
 }
 
 // Initialize chats store
 export function initializeChats() {
-  if (!browser) return;
+  if (!browser || chatsInitialized) return;
 
+  // Only initialize once per session
+  chatsInitialized = true;
+  
   // Reset stores to initial state
   chats.set([]);
   activeChat.set(null);

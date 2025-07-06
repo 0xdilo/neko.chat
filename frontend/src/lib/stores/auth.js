@@ -1,6 +1,7 @@
 import { writable } from "svelte/store";
 import { browser } from "$app/environment";
 import { authAPI } from "$lib/api/auth.js";
+import { resetChatsInitialized } from "./chats.js";
 
 export const isAuthenticated = writable(false);
 export const user = writable(null);
@@ -71,6 +72,9 @@ export async function logout() {
     auth.set(null);
     isAuthenticated.set(false);
     authError.set(null);
+
+    // Reset the chat store so the next user gets a clean state
+    resetChatsInitialized();
 
     if (browser) {
       localStorage.removeItem("neko-auth-token");
