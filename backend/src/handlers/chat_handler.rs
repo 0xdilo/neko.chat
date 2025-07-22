@@ -3,6 +3,7 @@ use crate::{
     database::{Chat, Message},
     error::AppError,
     handlers::settings_handler::SystemPrompt,
+    validation::MessageValidator,
 };
 use axum::{
     extract::{Path, State},
@@ -11,6 +12,31 @@ use axum::{
 use serde::Deserialize;
 use sqlx::PgPool;
 use uuid::Uuid;
+
+// Helper function to verify chat ownership
+async fn verify_chat_ownership(pool: &PgPool, chat_id: &str, user_id: &str) -> Result<(), AppError> {
+    let exists: Option<(String,)> = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1 AND user_id = $2")
+        .bind(chat_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+
+    if exists.is_some() {
+        Ok(())
+    } else {
+        Err(AppError::NotFound)
+    }
+}
+
+// Helper function to get chat with ownership verification
+async fn get_user_chat(pool: &PgPool, chat_id: &str, user_id: &str) -> Result<Chat, AppError> {
+    sqlx::query_as::<_, Chat>("SELECT * FROM chats WHERE id = $1 AND user_id = $2")
+        .bind(chat_id)
+        .bind(user_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|_| AppError::NotFound)
+}
 
 #[derive(Deserialize)]
 pub struct CreateChatPayload {
@@ -61,6 +87,18 @@ pub async fn create_chat(
     claims: Claims,
     Json(payload): Json<CreateChatPayload>,
 ) -> Result<Json<Chat>, AppError> {
+    // Validate input
+    MessageValidator::validate_title(&payload.title)?;
+    if let Some(ref provider) = payload.provider {
+        MessageValidator::validate_provider(provider)?;
+    }
+    if let Some(ref model) = payload.model {
+        MessageValidator::validate_model(model)?;
+    }
+    if let Some(ref system_prompt) = payload.system_prompt {
+        MessageValidator::validate_system_prompt(system_prompt)?;
+    }
+
     let chat_id = Uuid::new_v4().to_string();
     let user_id = claims.sub;
 
@@ -133,15 +171,7 @@ pub async fn get_messages(
     Path(chat_id): Path<String>,
 ) -> Result<Json<Vec<Message>>, AppError> {
     let user_id = claims.sub;
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     let messages = sqlx::query_as::<_, Message>(
         "SELECT * FROM messages WHERE chat_id = $1 ORDER BY created_at ASC",
@@ -160,49 +190,20 @@ pub async fn delete_chat(
 ) -> Result<Json<()>, AppError> {
     let user_id = claims.sub;
 
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
+
+    // Since we have ON DELETE CASCADE, we can delete all child chats and their messages efficiently
+    // First delete all child chats (and their messages via CASCADE)
+    sqlx::query("DELETE FROM chats WHERE parent_chat_id = $1 AND user_id = $2")
         .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
-
-    // Get all child chats (branches) that reference this chat as parent
-    let child_chats: Vec<(String,)> = sqlx::query_as(
-        "SELECT id FROM chats WHERE parent_chat_id = $1 AND user_id = $2"
-    )
-    .bind(&chat_id)
-    .bind(&user_id)
-    .fetch_all(&pool)
-    .await?;
-
-    // Recursively delete all child chats first
-    for (child_id,) in child_chats {
-        // Delete messages for child chat
-        sqlx::query("DELETE FROM messages WHERE chat_id = $1")
-            .bind(&child_id)
-            .execute(&pool)
-            .await?;
-        
-        // Delete child chat
-        sqlx::query("DELETE FROM chats WHERE id = $1")
-            .bind(&child_id)
-            .execute(&pool)
-            .await?;
-    }
-
-    // Delete messages for the main chat
-    sqlx::query("DELETE FROM messages WHERE chat_id = $1")
-        .bind(&chat_id)
+        .bind(&user_id)
         .execute(&pool)
         .await?;
 
-    // Delete the main chat
-    sqlx::query("DELETE FROM chats WHERE id = $1")
+    // Delete the main chat (messages will be deleted via CASCADE)
+    sqlx::query("DELETE FROM chats WHERE id = $1 AND user_id = $2")
         .bind(&chat_id)
+        .bind(&user_id)
         .execute(&pool)
         .await?;
 
@@ -215,18 +216,24 @@ pub async fn update_chat(
     Path(chat_id): Path<String>,
     Json(payload): Json<UpdateChatPayload>,
 ) -> Result<Json<Chat>, AppError> {
+    // Validate input
+    if let Some(ref title) = payload.title {
+        MessageValidator::validate_title(title)?;
+    }
+    if let Some(ref system_prompt) = payload.system_prompt {
+        MessageValidator::validate_system_prompt(system_prompt)?;
+    }
+    if let Some(ref provider) = payload.provider {
+        MessageValidator::validate_provider(provider)?;
+    }
+    if let Some(ref model) = payload.model {
+        MessageValidator::validate_model(model)?;
+    }
+
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     // Build update query dynamically based on provided fields
     let mut query_builder = sqlx::QueryBuilder::new("UPDATE chats SET ");
@@ -299,18 +306,13 @@ pub async fn bulk_insert_messages(
     Path(chat_id): Path<String>,
     Json(payload): Json<BulkMessagesPayload>,
 ) -> Result<Json<Vec<Message>>, AppError> {
+    // Validate bulk messages payload
+    MessageValidator::validate_bulk_messages(&payload.messages)?;
+
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     if payload.messages.is_empty() {
         return Ok(Json(vec![]));
@@ -344,18 +346,13 @@ pub async fn update_message(
     Path((chat_id, message_id)): Path<(String, String)>,
     Json(payload): Json<UpdateMessagePayload>,
 ) -> Result<Json<Message>, AppError> {
+    // Validate message content
+    MessageValidator::validate_content(&payload.content)?;
+
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     // Update the message content
     let updated_message = sqlx::query_as::<_, Message>(
@@ -379,30 +376,17 @@ pub async fn delete_message_and_subsequent(
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     // Get IDs of messages to delete and delete them in one query
     let deleted_ids: Vec<(String,)> = sqlx::query_as(
-        r#"
-        WITH target_message AS (
-            SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2
-        )
-        DELETE FROM messages 
-        WHERE chat_id = $2 
-        AND created_at >= (SELECT created_at FROM target_message)
-        RETURNING id
-        "#
+        r#"DELETE FROM messages 
+           WHERE chat_id = $1 
+           AND created_at >= (SELECT created_at FROM messages WHERE id = $2 AND chat_id = $1)
+           RETURNING id"#
     )
-    .bind(&message_id)
     .bind(&chat_id)
+    .bind(&message_id)
     .fetch_all(&pool)
     .await?;
 
@@ -422,30 +406,17 @@ pub async fn delete_subsequent_messages(
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     // Get IDs of messages to delete and delete them in one query
     let deleted_ids: Vec<(String,)> = sqlx::query_as(
-        r#"
-        WITH target_message AS (
-            SELECT created_at FROM messages WHERE id = $1 AND chat_id = $2
-        )
-        DELETE FROM messages 
-        WHERE chat_id = $2 
-        AND created_at > (SELECT created_at FROM target_message)
-        RETURNING id
-        "#
+        r#"DELETE FROM messages 
+           WHERE chat_id = $1 
+           AND created_at > (SELECT created_at FROM messages WHERE id = $2 AND chat_id = $1)
+           RETURNING id"#
     )
-    .bind(&message_id)
     .bind(&chat_id)
+    .bind(&message_id)
     .fetch_all(&pool)
     .await?;
 
@@ -461,15 +432,7 @@ pub async fn delete_single_message(
     let user_id = claims.sub;
 
     // Verify the user owns this chat
-    let chat_owner: (String,) = sqlx::query_as("SELECT user_id FROM chats WHERE id = $1")
-        .bind(&chat_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
-
-    if chat_owner.0 != user_id {
-        return Err(AppError::Unauthorized);
-    }
+    verify_chat_ownership(&pool, &chat_id, &user_id).await?;
 
     // Verify the message exists in this chat
     let message_exists: Result<(String,), sqlx::Error> = sqlx::query_as(
@@ -502,13 +465,8 @@ pub async fn create_fork(
 ) -> Result<Json<Chat>, AppError> {
     let user_id = claims.sub;
     
-    // Verify the user owns this chat
-    let parent_chat: Chat = sqlx::query_as("SELECT * FROM chats WHERE id = $1 AND user_id = $2")
-        .bind(&chat_id)
-        .bind(&user_id)
-        .fetch_one(&pool)
-        .await
-        .map_err(|_| AppError::NotFound)?;
+    // Get the parent chat with ownership verification
+    let parent_chat: Chat = get_user_chat(&pool, &chat_id, &user_id).await?;
     
     // Get the message we're forking from
     let fork_message: Message = sqlx::query_as("SELECT * FROM messages WHERE id = $1 AND chat_id = $2")

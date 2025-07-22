@@ -42,13 +42,16 @@ class WebSocketClient {
     this.ws = null;
     this.url = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 1000;
+    this.maxReconnectAttempts = 10; // Increased from 5
+    this.baseReconnectDelay = 1000;
+    this.maxReconnectDelay = 30000; // Maximum delay of 30 seconds
+    this.reconnectTimeoutId = null;
     this.heartbeatInterval = null;
     this.heartbeatTimeout = null;
     this.messageHandlers = new Map();
     this.connected = false;
     this.connecting = false;
+    this.shouldReconnect = true;
   }
 
   // Connect to WebSocket server
@@ -239,13 +242,42 @@ class WebSocketClient {
     }
   }
 
-  // Schedule reconnection attempt
+  // Schedule reconnection attempt with exponential backoff and jitter
   scheduleReconnect() {
-    this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    if (!this.shouldReconnect) {
+      return;
+    }
 
-    setTimeout(() => {
-      if (!this.connected) {
+    // Clear any existing reconnection timeout
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+    }
+
+    this.reconnectAttempts++;
+    
+    if (this.reconnectAttempts > this.maxReconnectAttempts) {
+      console.error(`Max reconnection attempts (${this.maxReconnectAttempts}) reached`);
+      wsError.set("Connection lost. Please refresh the page to reconnect.");
+      return;
+    }
+
+    // Exponential backoff with jitter
+    const exponentialDelay = Math.min(
+      this.baseReconnectDelay * Math.pow(2, this.reconnectAttempts - 1),
+      this.maxReconnectDelay
+    );
+    
+    // Add jitter (±25% random variation)
+    const jitter = exponentialDelay * 0.25 * (Math.random() - 0.5) * 2;
+    const delay = Math.max(1000, exponentialDelay + jitter);
+
+    console.log(`Scheduling reconnection attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts} in ${Math.round(delay)}ms`);
+    
+    wsError.set(`Connection lost. Reconnecting in ${Math.round(delay / 1000)}s... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+
+    this.reconnectTimeoutId = setTimeout(() => {
+      if (!this.connected && this.shouldReconnect) {
+        console.log(`Reconnection attempt ${this.reconnectAttempts}`);
         this.connect();
       }
     }, delay);
@@ -259,7 +291,18 @@ class WebSocketClient {
   }
 
   // Disconnect from server
-  disconnect() {
+  disconnect(permanently = false) {
+    // Set flag to prevent automatic reconnection
+    if (permanently) {
+      this.shouldReconnect = false;
+    }
+
+    // Clear any pending reconnection
+    if (this.reconnectTimeoutId) {
+      clearTimeout(this.reconnectTimeoutId);
+      this.reconnectTimeoutId = null;
+    }
+
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -272,6 +315,19 @@ class WebSocketClient {
     wsConnecting.set(false);
 
     this.stopHeartbeat();
+
+    if (permanently) {
+      this.reconnectAttempts = 0;
+      wsError.set(null);
+    }
+  }
+
+  // Force immediate reconnection attempt
+  reconnect() {
+    this.shouldReconnect = true;
+    this.disconnect(false);
+    this.reconnectAttempts = 0; // Reset attempts for manual reconnection
+    this.connect();
   }
 
   // Register message handler
@@ -326,7 +382,10 @@ export const websocket = {
   connect: (url) => wsClient.connect(url),
 
   // Disconnect from WebSocket
-  disconnect: () => wsClient.disconnect(),
+  disconnect: (permanently = false) => wsClient.disconnect(permanently),
+
+  // Force reconnection
+  reconnect: () => wsClient.reconnect(),
 
   // Send message
   send: (message) => wsClient.send(message),

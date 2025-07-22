@@ -3,6 +3,7 @@ use crate::{
     database::{Chat, Message, UserApiKey},
     error::AppError,
     llm::get_llm_client,
+    validation::MessageValidator,
     AppState,
 };
 use async_stream::stream;
@@ -297,6 +298,11 @@ pub async fn stream_message(
     Path(chat_id): Path<String>,
     Json(payload): Json<SendMessagePayload>,
 ) -> impl IntoResponse {
+    // Validate message content
+    if let Err(e) = MessageValidator::validate_content(&payload.content) {
+        return e.into_response();
+    }
+
     let user_id = claims.sub;
     let pool = app_state.db_pool.clone();
     let tx = app_state.tx.clone();

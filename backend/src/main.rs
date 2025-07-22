@@ -5,6 +5,7 @@ mod error;
 mod handlers;
 mod llm;
 mod routes;
+mod validation;
 
 use axum::extract::FromRef;
 use axum::http::{HeaderValue, Method};
