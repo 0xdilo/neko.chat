@@ -45,7 +45,7 @@ impl FromRef<AppState> for broadcast::Sender<Message> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -63,7 +63,10 @@ async fn main() {
         .acquire_timeout(Duration::from_secs(5))
         .connect(&config.database_url)
         .await
-        .expect("failed to connect to database");
+        .map_err(|e| {
+            tracing::error!("Failed to connect to database: {}", e);
+            e
+        })?;
 
     tracing::info!("database connection established");
 
@@ -178,8 +181,11 @@ async fn main() {
         }
     } else {
         tracing::info!("ensuring default admin account ('admin@admin.com') is enabled...");
-        let admin_password_hash =
-            bcrypt::hash("admin", bcrypt::DEFAULT_COST).expect("failed to hash admin password");
+        let admin_password_hash = bcrypt::hash("admin", bcrypt::DEFAULT_COST)
+            .map_err(|e| {
+                tracing::error!("Failed to hash admin password: {}", e);
+                e
+            })?;
 
         let admin_insert_result = sqlx::query(
             r#"INSERT INTO users (id, email, name, password_hash, role)
@@ -275,7 +281,11 @@ async fn main() {
     };
 
     let cors = CorsLayer::new()
-        .allow_origin("http://localhost:5173".parse::<HeaderValue>().unwrap())
+        .allow_origin("http://localhost:5173".parse::<HeaderValue>()
+            .map_err(|e| {
+                tracing::error!("Failed to parse CORS origin: {}", e);
+                e
+            })?)
         .allow_methods([
             Method::GET,
             Method::POST,
@@ -290,10 +300,23 @@ async fn main() {
     let app = routes::create_router(app_state).layer(cors);
 
     let addr_str = std::env::var("SERVER_ADDR").unwrap_or_else(|_| "127.0.0.1:8080".to_string());
-    let addr: SocketAddr = addr_str.parse().expect("invalid server address format");
+    let addr: SocketAddr = addr_str.parse()
+        .map_err(|e| {
+            tracing::error!("Invalid server address format '{}': {}", addr_str, e);
+            e
+        })?;
     tracing::info!("server listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await
+        .map_err(|e| {
+            tracing::error!("Failed to bind to address {}: {}", addr, e);
+            e
+        })?;
+    axum::serve(listener, app).await
+        .map_err(|e| {
+            tracing::error!("Server error: {}", e);
+            e
+        })?;
+    Ok(())
 }
 
 fn print_neko() {

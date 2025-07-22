@@ -16,6 +16,7 @@ use futures_util::{StreamExt, TryStreamExt};
 use magic_crypt::{new_magic_crypt, MagicCryptTrait};
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -227,6 +228,68 @@ pub async fn send_message(
     Ok(Json(assistant_message))
 }
 
+// --- helper functions for stream_message ---
+async fn validate_chat_access(
+    pool: &PgPool,
+    chat_id: &str,
+    user_id: &str,
+) -> Result<(String, String), AppError> {
+    let result = sqlx::query_as::<_, (String, String, String)>(
+        "SELECT user_id, provider, model FROM chats WHERE id = $1",
+    )
+    .bind(chat_id)
+    .fetch_one(pool)
+    .await;
+
+    match result {
+        Ok((owner_id, provider, model)) => {
+            if owner_id != user_id {
+                Err(AppError::Unauthorized)
+            } else {
+                Ok((provider, model))
+            }
+        }
+        Err(_) => Err(AppError::NotFound),
+    }
+}
+
+async fn setup_llm_client(
+    pool: &PgPool,
+    user_id: &str,
+    provider: &str,
+    encryption_key: &str,
+) -> Result<Box<dyn crate::llm::LLMClient>, AppError> {
+    let api_key = get_decrypted_key(pool, user_id, provider, encryption_key).await?;
+    tracing::info!("Using provider: {}", provider);
+    get_llm_client(provider, &api_key)
+}
+
+async fn insert_user_message(
+    pool: &PgPool,
+    chat_id: &str,
+    content: &str,
+) -> Result<Message, AppError> {
+    let user_message_id = Uuid::new_v4().to_string();
+    
+    sqlx::query_as::<_, Message>(
+        "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'user', $3) RETURNING *",
+    )
+    .bind(&user_message_id)
+    .bind(chat_id)
+    .bind(content)
+    .fetch_one(pool)
+    .await
+    .map_err(AppError::DatabaseError)
+}
+
+async fn get_chat_details(pool: &PgPool, chat_id: &str) -> Result<Chat, AppError> {
+    sqlx::query_as::<_, Chat>("SELECT * FROM chats WHERE id = $1")
+        .bind(chat_id)
+        .fetch_one(pool)
+        .await
+        .map_err(AppError::DatabaseError)
+}
+
 // --- streaming handler ---
 pub async fn stream_message(
     State(app_state): State<AppState>,
@@ -239,35 +302,14 @@ pub async fn stream_message(
     let tx = app_state.tx.clone();
     let encryption_key = app_state.config.encryption_key.clone();
 
-    // --- 1. Fast validation and prep (combine queries to reduce round trips) ---
-    let chat_info = match sqlx::query_as::<_, (String, String, String)>(
-        "SELECT user_id, provider, model FROM chats WHERE id = $1",
-    )
-    .bind(&chat_id)
-    .fetch_one(&pool)
-    .await
-    {
-        Ok((owner_id, provider, model)) => {
-            if owner_id != user_id {
-                return AppError::Unauthorized.into_response();
-            }
-            (provider, model)
-        }
-        Err(_) => return AppError::NotFound.into_response(),
-    };
-
-    let (chat_provider, chat_model) = chat_info;
-
-    // Get API key early
-    let api_key = match get_decrypted_key(&pool, &user_id, &chat_provider, &encryption_key).await {
-        Ok(k) => k,
+    // --- 1. Validation and setup ---
+    let (chat_provider, chat_model) = match validate_chat_access(&pool, &chat_id, &user_id).await {
+        Ok(info) => info,
         Err(e) => return e.into_response(),
     };
 
-    // Create LLM client early
-    tracing::info!("Using provider: {}, model: {}", &chat_provider, &chat_model);
-    let llm_client = match get_llm_client(&chat_provider, &api_key) {
-        Ok(c) => c,
+    let llm_client = match setup_llm_client(&pool, &user_id, &chat_provider, &encryption_key).await {
+        Ok(client) => client,
         Err(e) => {
             tracing::error!(
                 "Failed to create LLM client for provider {}: {:?}",
@@ -277,6 +319,8 @@ pub async fn stream_message(
             return e.into_response();
         }
     };
+    
+    tracing::info!("Using provider: {}, model: {}", &chat_provider, &chat_model);
 
     // --- 2. Async DB operations and stream preparation ---
     let pool_clone = pool.clone();
@@ -287,44 +331,24 @@ pub async fn stream_message(
 
     // --- 3. create the stream ---
     let response_stream = stream! {
-        // Insert user message and prepare conversation in parallel with streaming start
-        let user_message_id = Uuid::new_v4().to_string();
+        // Insert user message and get chat details in parallel
+        let user_msg_future = insert_user_message(&pool_clone, &chat_id_clone, &payload_content);
+        let chat_future = get_chat_details(&pool_clone, &chat_id_clone);
 
-        // Start user message insert
-        let user_msg_future = async {
-            sqlx::query_as::<_, Message>(
-                "INSERT INTO messages (id, chat_id, role, content) VALUES ($1, $2, 'user', $3) RETURNING *",
-            )
-            .bind(&user_message_id)
-            .bind(&chat_id_clone)
-            .bind(&payload_content)
-            .fetch_one(&pool_clone)
-            .await
-        };
-
-        // Get full chat details for conversation prep
-        let chat_future = async {
-            sqlx::query_as::<_, Chat>("SELECT * FROM chats WHERE id = $1")
-                .bind(&chat_id_clone)
-                .fetch_one(&pool_clone)
-                .await
-        };
-
-        // Execute both operations
         let (user_msg_result, chat_result) = tokio::join!(user_msg_future, chat_future);
 
         let user_message = match user_msg_result {
             Ok(m) => m,
             Err(e) => {
-                yield Err(AppError::DatabaseError(e));
+                yield Err(e);
                 return;
             }
         };
 
         let chat = match chat_result {
             Ok(c) => c,
-            Err(_) => {
-                yield Err(AppError::NotFound);
+            Err(e) => {
+                yield Err(e);
                 return;
             }
         };
