@@ -37,6 +37,7 @@
 	import { showError, showSuccess } from "$lib/stores/app.js";
 	import { api } from "$lib/api/client.js";
 	import { chatAPI } from "$lib/api/chats.js";
+	import { USE_ENHANCED_STREAMING } from "$lib/api/websocket.js";
 	import { apiKeys } from "$lib/stores/settings.js";
 	import {
 		enabledModels,
@@ -558,7 +559,8 @@ async function handleKeydown(e) {
 				addMessageToActiveChat(assistantMessage);
 
 				try {
-					await chatAPI.regenerateResponse($currentChat.id, {
+					const regenerateMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedRegenerateResponse : chatAPI.regenerateResponse;
+					await regenerateMethod($currentChat.id, {
 						onStart: (controller) => {
 							abortControllers.set($currentChat.id, controller);
 						},
@@ -648,7 +650,8 @@ async function handleKeydown(e) {
 
 			addMessageToActiveChat(assistantMessage);
 
-			await chatAPI.regenerateResponse($currentChat.id, {
+			const regenerateMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedRegenerateResponse : chatAPI.regenerateResponse;
+			await regenerateMethod($currentChat.id, {
 				onStart: (controller) => {
 					abortControllers.set($currentChat.id, controller);
 				},
@@ -751,7 +754,8 @@ async function handleKeydown(e) {
 			if (branchPointMessage.role === "user") {
 				try {
 					// Use the stream API to generate a response to the last message
-					await chatAPI.streamMessage(newChat.id, branchPointMessage.content, {
+					const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+					await streamMethod(newChat.id, branchPointMessage.content, {
 						onStart: (controller) => {
 							// Handle streaming start
 						},

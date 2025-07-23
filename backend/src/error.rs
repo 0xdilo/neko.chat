@@ -15,6 +15,7 @@ pub enum AppError {
     DatabaseError(sqlx::Error),
     JwtError(jsonwebtoken::errors::Error),
     PasswordHashError(bcrypt::BcryptError),
+    SerializationError(serde_json::Error),
     LLMProviderError {
         provider: String,
         status_code: Option<u16>,
@@ -32,6 +33,7 @@ impl fmt::Display for AppError {
             AppError::DatabaseError(_) => "Database operation failed",
             AppError::JwtError(_) => "Invalid token",
             AppError::PasswordHashError(_) => "Could not process request",
+            AppError::SerializationError(_) => "Serialization error",
             AppError::LLMProviderError { provider, status_code, message } => {
                 if let Some(code) = status_code {
                     return write!(f, "{} (HTTP {}): {}", provider, code, message);
@@ -65,6 +67,10 @@ impl IntoResponse for AppError {
                 tracing::error!("Password hash error: {}", e);
                 (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
             }
+            AppError::SerializationError(ref e) => {
+                tracing::error!("Serialization error: {}", e);
+                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string())
+            }
             AppError::LLMProviderError { ref provider, status_code, ref message } => {
                 tracing::error!("LLM Provider error - {}: {}", provider, message);
                 // For HTTP responses, convert to appropriate status code
@@ -95,5 +101,11 @@ impl From<jsonwebtoken::errors::Error> for AppError {
 impl From<bcrypt::BcryptError> for AppError {
     fn from(e: bcrypt::BcryptError) -> Self {
         AppError::PasswordHashError(e)
+    }
+}
+
+impl From<serde_json::Error> for AppError {
+    fn from(e: serde_json::Error) -> Self {
+        AppError::SerializationError(e)
     }
 }

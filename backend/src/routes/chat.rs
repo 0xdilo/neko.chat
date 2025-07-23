@@ -34,11 +34,6 @@ pub fn create_chat_routes() -> Router<AppState> {
             "/api/chats/:id/messages/bulk",
             post(chat_handler::bulk_insert_messages),
         )
-        .route("/api/chats/:id/stream", post(llm_handler::stream_message))
-        .route(
-            "/api/chats/:id/regenerate",
-            post(llm_handler::regenerate_response),
-        )
         .route(
             "/api/chats/:id/parallel",
             post(llm_handler::parallel_llm_query),

@@ -6,12 +6,13 @@ mod handlers;
 mod llm;
 mod routes;
 mod validation;
+mod streaming_manager;
+mod ws_messages;
 
 use axum::extract::FromRef;
 use axum::http::{HeaderValue, Method};
 use bcrypt;
 use config::Config;
-use database::Message;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::net::SocketAddr;
@@ -19,12 +20,15 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use streaming_manager::StreamingManager;
+use ws_messages::WsMessage;
 
 #[derive(Clone)]
 pub struct AppState {
-    db_pool: PgPool,
-    config: Config,
-    tx: broadcast::Sender<Message>,
+    pub db_pool: PgPool,
+    pub config: Config,
+    pub tx: broadcast::Sender<WsMessage>,
+    pub streaming_manager: Option<StreamingManager>,
 }
 
 impl FromRef<AppState> for PgPool {
@@ -39,9 +43,15 @@ impl FromRef<AppState> for Config {
     }
 }
 
-impl FromRef<AppState> for broadcast::Sender<Message> {
-    fn from_ref(app_state: &AppState) -> broadcast::Sender<Message> {
+impl FromRef<AppState> for broadcast::Sender<WsMessage> {
+    fn from_ref(app_state: &AppState) -> broadcast::Sender<WsMessage> {
         app_state.tx.clone()
+    }
+}
+
+impl FromRef<AppState> for Option<StreamingManager> {
+    fn from_ref(app_state: &AppState) -> Option<StreamingManager> {
+        app_state.streaming_manager.clone()
     }
 }
 
@@ -145,6 +155,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             PRIMARY KEY (user_id, provider, model_id),
             FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
         )"#,
+        r#"CREATE TABLE IF NOT EXISTS streaming_states (
+            id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            chat_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'streaming',
+            content TEXT NOT NULL DEFAULT '',
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            total_tokens INTEGER,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            completed_at TIMESTAMPTZ,
+            error_message TEXT,
+            last_chunk_index INTEGER DEFAULT -1,
+            chunks JSONB DEFAULT '[]'::jsonb,
+            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+            FOREIGN KEY (chat_id) REFERENCES chats(id) ON DELETE CASCADE,
+            FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+        )"#,
     ];
 
     for statement in schema_statements {
@@ -224,6 +253,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "CREATE INDEX IF NOT EXISTS idx_messages_chat_created ON messages(chat_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_chats_user_created ON chats(user_id, created_at)",
         "CREATE INDEX IF NOT EXISTS idx_user_models_user_enabled ON user_models(user_id, is_enabled)",
+        "CREATE INDEX IF NOT EXISTS idx_streaming_states_user_status ON streaming_states(user_id, status)",
+        "CREATE INDEX IF NOT EXISTS idx_streaming_states_message_id ON streaming_states(message_id)",
+        "CREATE INDEX IF NOT EXISTS idx_streaming_states_created_at ON streaming_states(created_at)",
+        "CREATE INDEX IF NOT EXISTS idx_streaming_states_active ON streaming_states(user_id, status, created_at DESC) WHERE status = 'streaming'",
     ];
 
     for statement in index_statements {
@@ -273,12 +306,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("all migrations completed");
 
     // Create broadcast channel for WebSocket messages with higher capacity
-    let (tx, _rx) = broadcast::channel::<Message>(1000); // Increased from 100
+    let (tx, _rx) = broadcast::channel::<WsMessage>(1000); // Increased from 100
+
+    // Create streaming manager
+    let streaming_manager = StreamingManager::new(db_pool.clone(), tx.clone());
 
     let app_state = AppState {
         db_pool,
         config: config.clone(),
         tx,
+        streaming_manager: Some(streaming_manager),
     };
 
     let cors = CorsLayer::new()

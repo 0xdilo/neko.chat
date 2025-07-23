@@ -178,7 +178,7 @@ pub async fn send_message(
     .fetch_one(pool)
     .await?;
 
-    let _ = app_state.tx.send(user_message.clone());
+    let _ = app_state.tx.send(crate::ws_messages::WsMessage::new_chat_message(user_message.clone()));
 
     // Update chat title if this is the first user message and chat has generic title
     if chat.title == "New Chat" || chat.title.contains("New Chat") {
@@ -224,7 +224,7 @@ pub async fn send_message(
     .fetch_one(pool)
     .await?;
 
-    let _ = app_state.tx.send(assistant_message.clone());
+    let _ = app_state.tx.send(crate::ws_messages::WsMessage::new_chat_message(assistant_message.clone()));
 
     Ok(Json(assistant_message))
 }
@@ -360,7 +360,7 @@ pub async fn stream_message(
         };
 
         // Send user message to websocket
-        let _ = tx_clone.send(user_message.clone());
+        let _ = tx_clone.send(crate::ws_messages::WsMessage::new_chat_message(user_message.clone()));
 
         // Prepare conversation
         let conversation = match prepare_conversation(&pool_clone, &chat).await {
@@ -453,7 +453,7 @@ pub async fn stream_message(
                 has_streamed: bool,
                 pool: sqlx::PgPool,
                 chat_id: String,
-                tx: tokio::sync::broadcast::Sender<Message>,
+                tx: tokio::sync::broadcast::Sender<crate::ws_messages::WsMessage>,
                 max_size: usize, // Add memory limit
             }
 
@@ -496,7 +496,7 @@ pub async fn stream_message(
                             .await {
                                 Ok(assistant_message) => {
                                     tracing::info!("ContentSaver: Successfully saved partial message with ID: {}", assistant_message.id);
-                                    let _ = tx.send(assistant_message);
+                                    let _ = tx.send(crate::ws_messages::WsMessage::new_chat_message(assistant_message));
                                 }
                                 Err(e) => {
                                     tracing::error!("ContentSaver: Failed to save partial message: {:?}", e);
@@ -621,7 +621,7 @@ pub async fn regenerate_response(
                 has_streamed: bool,
                 pool: sqlx::PgPool,
                 chat_id: String,
-                tx: tokio::sync::broadcast::Sender<Message>,
+                tx: tokio::sync::broadcast::Sender<crate::ws_messages::WsMessage>,
             }
 
             impl Drop for ContentSaver {
@@ -644,7 +644,7 @@ pub async fn regenerate_response(
                             .await {
                                 Ok(assistant_message) => {
                                     tracing::info!("Regenerate ContentSaver: Successfully saved partial message with ID: {}", assistant_message.id);
-                                    let _ = tx.send(assistant_message);
+                                    let _ = tx.send(crate::ws_messages::WsMessage::new_chat_message(assistant_message));
                                 }
                                 Err(e) => {
                                     tracing::error!("Regenerate ContentSaver: Failed to save partial message: {:?}", e);
@@ -709,7 +709,7 @@ pub async fn parallel_llm_query(
     .fetch_one(pool)
     .await?;
 
-    let _ = app_state.tx.send(user_message.clone());
+    let _ = app_state.tx.send(crate::ws_messages::WsMessage::new_chat_message(user_message.clone()));
 
     // Update parent chat title if it has a generic title and this is the first user message
     if parent_chat.title == "New Chat" || parent_chat.title.contains("New Chat") {

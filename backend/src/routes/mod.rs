@@ -6,6 +6,8 @@ pub mod chat;
 pub mod key;
 pub mod settings;
 pub mod websocket;
+pub mod streaming;
+pub mod enhanced_streaming;
 
 pub fn create_router(app_state: AppState) -> Router {
     Router::new()
@@ -13,6 +15,6 @@ pub fn create_router(app_state: AppState) -> Router {
         .merge(chat::create_chat_routes())
         .merge(key::create_key_routes())
         .merge(settings::create_settings_routes())
-        .merge(websocket::create_websocket_routes())
+        .merge(enhanced_streaming::create_routes())
         .with_state(app_state)
 }

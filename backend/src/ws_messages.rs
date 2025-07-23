@@ -1,7 +1,7 @@
 use serde::{Serialize, Deserialize};
 use crate::database::Message;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WsMessageType {
     ChatMessage,
@@ -15,6 +15,12 @@ pub enum WsMessageType {
     SystemNotification,
     SettingsUpdate,
     UsageUpdate,
+    StreamingUpdate,
+    StreamingStart,
+    StreamingResume,
+    StreamingComplete,
+    StreamingError,
+    RequestStreamResume,
     Ping,
     Pong,
     Auth,
@@ -170,6 +176,61 @@ impl WsMessage {
             message_type: WsMessageType::Error,
             data: serde_json::json!({
                 "message": message,
+            }),
+        }
+    }
+
+    pub fn new_streaming_update(update: crate::streaming_manager::StreamingUpdate) -> Self {
+        WsMessage {
+            message_type: WsMessageType::StreamingUpdate,
+            data: serde_json::to_value(update).unwrap_or_default(),
+        }
+    }
+
+    pub fn new_streaming_start(stream_id: String, message_id: String, chat_id: String, user_id: String) -> Self {
+        WsMessage {
+            message_type: WsMessageType::StreamingStart,
+            data: serde_json::json!({
+                "stream_id": stream_id,
+                "message_id": message_id,
+                "chat_id": chat_id,
+                "user_id": user_id,
+            }),
+        }
+    }
+
+    pub fn new_streaming_resume(stream_id: String, message_id: String, chat_id: String, chunk_index: i32, content: String) -> Self {
+        WsMessage {
+            message_type: WsMessageType::StreamingResume,
+            data: serde_json::json!({
+                "stream_id": stream_id,
+                "message_id": message_id,
+                "chat_id": chat_id,
+                "chunk_index": chunk_index,
+                "content": content,
+            }),
+        }
+    }
+
+    pub fn new_streaming_complete(stream_id: String, message_id: String, chat_id: String) -> Self {
+        WsMessage {
+            message_type: WsMessageType::StreamingComplete,
+            data: serde_json::json!({
+                "stream_id": stream_id,
+                "message_id": message_id,
+                "chat_id": chat_id,
+            }),
+        }
+    }
+
+    pub fn new_streaming_error(stream_id: String, message_id: String, chat_id: String, error: String) -> Self {
+        WsMessage {
+            message_type: WsMessageType::StreamingError,
+            data: serde_json::json!({
+                "stream_id": stream_id,
+                "message_id": message_id,
+                "chat_id": chat_id,
+                "error": error,
             }),
         }
     }

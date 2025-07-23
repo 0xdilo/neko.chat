@@ -1,4 +1,4 @@
-use crate::{auth, error::AppError, database::Message, AppState};
+use crate::{auth, error::AppError, AppState};
 use axum::{
     extract::{
         ws::WebSocket,
@@ -9,7 +9,6 @@ use axum::{
 use futures_util::{SinkExt, StreamExt};
 use jsonwebtoken::{decode, DecodingKey, Validation};
 use serde::Deserialize;
-use tokio::sync::mpsc::Sender;
 
 #[derive(Deserialize)]
 pub struct WsAuthQuery {
@@ -45,8 +44,18 @@ async fn handle_socket(socket: WebSocket, user_id: String, state: AppState) {
     // Spawn task to send messages to this client
     tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            // Use cached user_id instead of querying database for every message
-            if msg.chat_id.is_empty() || user_owns_chat(&msg.chat_id, &user_id, &state).await.unwrap_or(false) {
+            // Check if message should be sent to this user
+            let should_send = if let Some(chat_id_val) = msg.data.get("chat_id") {
+                if let Some(chat_id) = chat_id_val.as_str() {
+                    !chat_id.is_empty() && user_owns_chat(chat_id, &user_id, &state).await.unwrap_or(false)
+                } else {
+                    false
+                }
+            } else {
+                true // Send messages without chat_id (system messages, etc.)
+            };
+
+            if should_send {
                 let message_json = serde_json::to_string(&msg).unwrap();
                 if sender.send(axum::extract::ws::Message::Text(message_json)).await.is_err() {
                     break;

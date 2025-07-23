@@ -31,3 +31,4 @@ tower-http = { version = "0.6.6", features = ["cors"] }
 magic-crypt = "4.0.1"
 async-stream = "0.3.6"
 urlencoding = "2.1.3"
+dashmap = "6.0.1"

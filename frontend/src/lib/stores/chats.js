@@ -2,6 +2,7 @@ import { writable, derived, get } from "svelte/store";
 import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
 import { chatAPI } from "$lib/api/chats.js";
+import { USE_ENHANCED_STREAMING, websocket, WS_MESSAGE_TYPES } from "$lib/api/websocket.js";
 import { showError, showSuccess } from "./app.js";
 import { rightSidebarCollapsed } from "./ui.js";
 import { getFirstEnabledModel, lastUsedModel } from "./models.js";
@@ -229,6 +230,8 @@ export async function setActiveChat(
       const { userMessage, assistantMessage, content } = streamingData;
       let messagesToDisplay = [...messages];
 
+      console.log(`setActiveChat: Found streaming data for chat ${chatId}, content length: ${content.length}`);
+
       // Ensure user message is displayed
       if (userMessage && !messages.some(m => m.role === 'user')) {
         messagesToDisplay.unshift(userMessage);
@@ -239,17 +242,22 @@ export async function setActiveChat(
       if (!existingAssistantMessage) {
         const messageToDisplay = {
           ...assistantMessage,
-          content: content,
+          content: content, // Use the accumulated content from streaming state
           streaming: true,
         };
         messagesToDisplay.push(messageToDisplay);
+        console.log(`setActiveChat: Added new streaming message with ${content.length} chars`);
       } else {
+        // IMPORTANT: Always use the content from streaming state, never from database
+        // The database content might be stale/empty while streaming
         messagesToDisplay = messagesToDisplay.map(m => 
           m.id === assistantMessage.id ? { ...m, content: content, streaming: true } : m
         );
+        console.log(`setActiveChat: Updated existing message with ${content.length} chars`);
       }
       activeChatMessages.set(messagesToDisplay);
     } else {
+      console.log(`setActiveChat: No streaming data found for chat ${chatId}`);
       activeChatMessages.set(messages);
     }
   } catch (err) {
@@ -480,11 +488,26 @@ export async function sendMessage(content, options = {}) {
   let pendingContent = "";
 
   try {
-    // Stream message response
-    await chatAPI.streamMessage(currentChatId, content, {
+    // Clear any stale streaming state first
+    streamingMessages.update((messages) => {
+      const updated = { ...messages };
+      delete updated[currentChatId];
+      return updated;
+    });
+    streamingChats.update((set) => {
+      const newSet = new Set(set);
+      newSet.delete(currentChatId);
+      return newSet;
+    });
+    
+    // Stream message response using enhanced streaming if enabled
+    const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+    await streamMethod(currentChatId, content, {
       webSearch: options.webSearch,
       onStart: options.onStart,
       onChunk: (chunk, accumulatedContent) => {
+        console.log(`Store onChunk called: chunk="${chunk.substring(0, 50)}...", accumulated=${accumulatedContent.length} chars`);
+        
         // Update global streaming state immediately
         streamingMessages.update((messages) => ({
           ...messages,
@@ -494,7 +517,7 @@ export async function sendMessage(content, options = {}) {
           },
         }));
 
-        // Throttle UI updates
+        // Throttle UI updates - still use accumulated content for backward compatibility
         pendingContent = accumulatedContent;
         const now = Date.now();
         if (now - lastUpdateTime >= UPDATE_THROTTLE_MS) {
@@ -739,7 +762,8 @@ async function startBranchStreaming(chatId, content, userMessage) {
       addMessageToActiveChat(assistantMessage);
     }
 
-    await chatAPI.streamMessage(chatId, content, {
+    const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+    await streamMethod(chatId, content, {
       webSearch: false, // Parallel messages use individual model capabilities
       onChunk: (chunk, accumulatedContent) => {
         // Update the global streaming state
@@ -889,4 +913,208 @@ export function initializeChats() {
   chatTree.set({});
   streamingChats.set(new Set());
   streamingMessages.set({});
+
+  // Set up global streaming message handlers if enhanced streaming is enabled
+  if (USE_ENHANCED_STREAMING) {
+    setupGlobalStreamingHandlers();
+    
+    // Request stream resume for any active streams
+    setTimeout(() => {
+      websocket.send({
+        type: "RequestStreamResume",
+        data: {}
+      });
+    }, 200);
+  }
+}
+
+// Setup global handlers for streaming messages
+function setupGlobalStreamingHandlers() {
+  // Handle streaming resume messages
+  websocket.on(WS_MESSAGE_TYPES.STREAMING_RESUME, (data) => {
+    const chatId = data.chat_id;
+    const content = data.content || "";
+    const messageId = data.message_id;
+    
+    console.log(`Resuming stream for chat ${chatId} with ${content.length} characters:`, content.substring(0, 100) + '...');
+    
+    // Small delay to ensure page load is complete before resume
+    setTimeout(() => {
+    
+    // Add to global streaming state
+    streamingChats.update((set) => new Set(set).add(chatId));
+    
+    // Create or update streaming message data with accumulated content
+    streamingMessages.update((messages) => ({
+      ...messages,
+      [chatId]: {
+        userMessage: null, // Will be filled when we get messages
+        assistantMessage: { id: messageId, role: "assistant", content, streaming: true, created_at: new Date().toISOString() },
+        assistantMessageId: messageId,
+        content: content,
+      },
+    }));
+    
+    // Force update the UI immediately, regardless of active chat
+    // This ensures the content is displayed before setActiveChat potentially overwrites it
+    const currentActiveChat = get(activeChat);
+    if (currentActiveChat === chatId) {
+      console.log(`Updating active chat UI with resumed content: ${content.length} chars`);
+      
+      // Force immediate update of the active chat messages
+      activeChatMessages.update((messages) => {
+        console.log(`Current messages count: ${messages.length}`);
+        const existingIndex = messages.findIndex(m => m.id === messageId);
+        
+        if (existingIndex >= 0) {
+          // Update existing message with full content
+          const updatedMessages = [...messages];
+          updatedMessages[existingIndex] = { 
+            ...updatedMessages[existingIndex], 
+            content, 
+            streaming: true 
+          };
+          console.log(`Updated existing message at index ${existingIndex} with ${content.length} chars`);
+          return updatedMessages;
+        } else {
+          // Add new assistant message with full accumulated content
+          const newMessage = { 
+            id: messageId, 
+            role: "assistant", 
+            content, 
+            streaming: true, 
+            created_at: new Date().toISOString() 
+          };
+          console.log(`Added new streaming message with ${content.length} chars`);
+          return [...messages, newMessage];
+        }
+      });
+    }
+    }, 100); // 100ms delay to ensure page load is complete
+  });
+  
+  // Handle streaming updates
+  websocket.on(WS_MESSAGE_TYPES.STREAMING_UPDATE, (data) => {
+    const chatId = data.chat_id;
+    const contentDelta = data.content_delta || "";
+    
+    // Update global streaming state - use full content from backend instead of delta
+    streamingMessages.update((messages) => {
+      if (messages[chatId]) {
+        // Use the full content sent by backend instead of accumulating deltas
+        messages[chatId].content = data.content || (messages[chatId].content + contentDelta);
+      }
+      return { ...messages };
+    });
+    
+    // If this is the active chat, update the UI
+    const currentActiveChat = get(activeChat);
+    if (currentActiveChat === chatId) {
+      // Use the full content directly from the backend
+      const fullContent = data.content || "";
+      
+      // Update the message with the full content from backend
+      activeChatMessages.update((messages) =>
+        messages.map((msg) =>
+          msg.id === data.message_id
+            ? { ...msg, content: fullContent, streaming: true }
+            : msg,
+        ),
+      );
+    }
+  });
+  
+  // Handle streaming complete
+  websocket.on(WS_MESSAGE_TYPES.STREAMING_COMPLETE, (data) => {
+    const chatId = data.chat_id;
+    const messageId = data.message_id;
+    const content = data.content; // May contain final content for completed streams
+    
+    console.log(`Stream completed for chat ${chatId}, final content: ${content ? content.length : 0} chars`);
+    
+    // If this is a completed stream being "resumed" (reconnect case), show the content first
+    if (content && content.length > 0) {
+      const currentActiveChat = get(activeChat);
+      if (currentActiveChat === chatId) {
+        console.log(`Displaying completed stream content: ${content.length} chars`);
+        
+        // Update the message in the active chat with final content
+        activeChatMessages.update((messages) => {
+          const existingIndex = messages.findIndex(m => m.id === messageId);
+          if (existingIndex >= 0) {
+            // Update existing message with final content
+            const updatedMessages = [...messages];
+            updatedMessages[existingIndex] = { 
+              ...updatedMessages[existingIndex], 
+              content, 
+              streaming: false 
+            };
+            return updatedMessages;
+          } else {
+            // Add new message with final content
+            return [...messages, { 
+              id: messageId, 
+              role: "assistant", 
+              content, 
+              streaming: false, 
+              created_at: new Date().toISOString() 
+            }];
+          }
+        });
+      }
+    }
+    
+    // Remove from streaming state
+    streamingChats.update((set) => {
+      const newSet = new Set(set);
+      newSet.delete(chatId);
+      return newSet;
+    });
+    
+    streamingMessages.update((messages) => {
+      const updated = { ...messages };
+      delete updated[chatId];
+      return updated;
+    });
+    
+    // If this is the active chat and no content was provided, just mark as complete
+    if (!content || content.length === 0) {
+      const currentActiveChat = get(activeChat);
+      if (currentActiveChat === chatId) {
+        updateMessageInActiveChat(messageId, { streaming: false });
+      }
+    }
+  });
+  
+  // Handle streaming errors
+  websocket.on(WS_MESSAGE_TYPES.STREAMING_ERROR, (data) => {
+    const chatId = data.chat_id;
+    const messageId = data.message_id;
+    const error = data.error || "Streaming error occurred";
+    
+    console.error(`Stream error for chat ${chatId}: ${error}`);
+    
+    // Remove from streaming state
+    streamingChats.update((set) => {
+      const newSet = new Set(set);
+      newSet.delete(chatId);
+      return newSet;
+    });
+    
+    streamingMessages.update((messages) => {
+      const updated = { ...messages };
+      delete updated[chatId];
+      return updated;
+    });
+    
+    // If this is the active chat, mark message as error
+    const currentActiveChat = get(activeChat);
+    if (currentActiveChat === chatId) {
+      updateMessageInActiveChat(messageId, { 
+        content: `Error: ${error}`,
+        streaming: false,
+        error: true 
+      });
+    }
+  });
 }

@@ -5,6 +5,9 @@ export const wsConnected = writable(false);
 export const wsConnecting = writable(false);
 export const wsError = writable(null);
 
+// Feature flag for enhanced streaming (v2)
+export const USE_ENHANCED_STREAMING = true;
+
 export const WS_MESSAGE_TYPES = {
   // Chat messages
   CHAT_MESSAGE: "chat_message",
@@ -25,6 +28,13 @@ export const WS_MESSAGE_TYPES = {
   // Real-time updates
   SETTINGS_UPDATE: "settings_update",
   USAGE_UPDATE: "usage_update",
+
+  // Streaming
+  STREAMING_UPDATE: "streaming_update",
+  STREAMING_START: "streaming_start",
+  STREAMING_RESUME: "streaming_resume",
+  STREAMING_COMPLETE: "streaming_complete",
+  STREAMING_ERROR: "streaming_error",
 
   // Connection management
   PING: "ping",
@@ -84,8 +94,9 @@ class WebSocketClient {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host.replace(":5173", ":8080"); // Development
     const token = localStorage.getItem("neko-auth-token");
+    const endpoint = USE_ENHANCED_STREAMING ? "/ws/v2" : "/ws";
 
-    return `${protocol}//${host}/ws${token ? `?token=${token}` : ""}`;
+    return `${protocol}//${host}${endpoint}${token ? `?token=${token}` : ""}`;
   }
 
   // Setup WebSocket event handlers
