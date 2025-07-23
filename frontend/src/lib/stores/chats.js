@@ -36,6 +36,21 @@ function generateChatTitle(content) {
   return title || cleanContent.substring(0, 47) + "...";
 }
 
+// Utility function to clean up streaming state for a chat
+function cleanupStreamingState(chatId) {
+  streamingChats.update((set) => {
+    const newSet = new Set(set);
+    newSet.delete(chatId);
+    return newSet;
+  });
+
+  streamingMessages.update((messages) => {
+    const updated = { ...messages };
+    delete updated[chatId];
+    return updated;
+  });
+}
+
 // Chat store structure
 export const chats = writable([]);
 export const activeChat = writable(null);
@@ -488,17 +503,8 @@ export async function sendMessage(content, options = {}) {
   let pendingContent = "";
 
   try {
-    // Clear any stale streaming state first
-    streamingMessages.update((messages) => {
-      const updated = { ...messages };
-      delete updated[currentChatId];
-      return updated;
-    });
-    streamingChats.update((set) => {
-      const newSet = new Set(set);
-      newSet.delete(currentChatId);
-      return newSet;
-    });
+    // Clear any stale streaming state first  
+    cleanupStreamingState(currentChatId);
     
     // Stream message response using WebSocket streaming
     const streamMethod = chatAPI.streamMessage;
@@ -538,17 +544,7 @@ export async function sendMessage(content, options = {}) {
         }
 
         // Clean up global streaming state
-        streamingChats.update((set) => {
-          const newSet = new Set(set);
-          newSet.delete(currentChatId);
-          return newSet;
-        });
-
-        streamingMessages.update((messages) => {
-          const updated = { ...messages };
-          delete updated[currentChatId];
-          return updated;
-        });
+        cleanupStreamingState(currentChatId);
 
         // Don't reload messages immediately - let websocket handle the final message update
         // The ContentSaver in the backend will send a websocket message with the saved message
@@ -562,17 +558,7 @@ export async function sendMessage(content, options = {}) {
         });
 
         // Clean up global streaming state on error
-        streamingChats.update((set) => {
-          const newSet = new Set(set);
-          newSet.delete(currentChatId);
-          return newSet;
-        });
-
-        streamingMessages.update((messages) => {
-          const updated = { ...messages };
-          delete updated[currentChatId];
-          return updated;
-        });
+        cleanupStreamingState(currentChatId);
 
         showError("Failed to get response");
       },
@@ -592,17 +578,7 @@ export async function sendMessage(content, options = {}) {
       });
 
       // Clean up global streaming state
-      streamingChats.update((set) => {
-        const newSet = new Set(set);
-        newSet.delete(currentChatId);
-        return newSet;
-      });
-
-      streamingMessages.update((messages) => {
-        const updated = { ...messages };
-        delete updated[currentChatId];
-        return updated;
-      });
+      cleanupStreamingState(currentChatId);
 
       // Don't reload messages from database on abort - keep the UI state with partial content
       // Return success to indicate no error should be shown
@@ -648,6 +624,17 @@ export async function sendParallelMessage(content, models, options = {}) {
     throw new Error("No models selected");
   }
 
+  // Deduplicate models to prevent creating multiple branches for the same provider/model
+  const uniqueModels = [];
+  const seen = new Set();
+  for (const model of models) {
+    const key = `${model.provider}:${model.model}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      uniqueModels.push(model);
+    }
+  }
+
   // Create a temporary user message object to pass to streaming functions.
   // This helps bridge the gap until the backend-persisted message is available.
   const userMessage = {
@@ -678,49 +665,125 @@ export async function sendParallelMessage(content, models, options = {}) {
   }
 
   try {
-    // Create branch chats for each model using the API client
-    const response = await fetch(`/api/chats/${currentChatId}/parallel`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${localStorage.getItem("neko-auth-token")}`,
-      },
-      body: JSON.stringify({
-        content,
-        models,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error("Failed to create parallel branches");
+    // Check if current chat uses one of the selected models
+    let chatsToStream = [];
+    let currentChatModel = null;
+    
+    if (currentChatData) {
+      currentChatModel = uniqueModels.find(m => 
+        m.provider === currentChatData.provider && 
+        m.model === currentChatData.model
+      );
     }
-
-    const branchChats = await response.json();
-
-    // Update chats store with new branches
-    chats.update((chatList) => [...branchChats, ...chatList]);
-
-    // Rebuild tree structure
-    const currentChats = await new Promise((resolve) => {
-      chats.subscribe((chatList) => resolve(chatList))();
-    });
-    buildChatTree(currentChats);
-
-    // Open right sidebar to show the graph
+    
+    // Create branches for models NOT used by the current chat
+    const modelsNeedingBranches = uniqueModels.filter(m => 
+      !currentChatModel || 
+      (m.provider !== currentChatModel.provider || m.model !== currentChatModel.model)
+    );
+    
+    // Open right sidebar immediately to show the graph
     rightSidebarCollapsed.set(false);
-
-    // Switch to first branch immediately
-    if (branchChats.length > 0) {
-      await setActiveChat(branchChats[0].id);
+    
+    // If current chat uses one of the selected models, start streaming in it
+    if (currentChatModel) {
+      chatsToStream.push({
+        id: currentChatId,
+        provider: currentChatModel.provider,
+        model: currentChatModel.model,
+        isCurrentChat: true
+      });
+      
+      // Start streaming in current chat (non-blocking)
+      sendMessage(content, {
+        provider: currentChatModel.provider,
+        model: currentChatModel.model,
+        webSearch: options.webSearch || false,
+        onStart: (controller) => {
+          if (options.onStart) {
+            options.onStart(controller);
+          }
+        }
+      }).catch(err => console.error("Error streaming in current chat:", err));
+    }
+    
+    // Handle branches - create them while finding the fork point
+    if (modelsNeedingBranches.length > 0) {
+      // Start a process to find user message and create branches
+      (async () => {
+        try {
+          let userMessageForForking = null;
+          let attempts = 0;
+          const maxAttempts = 10;
+          
+          // If no current model, we need to create the user message first
+          if (!currentChatModel) {
+            await sendMessage(content, {
+              webSearch: false,
+              onStart: (controller) => {
+                setTimeout(() => controller.abort(), 50);
+              }
+            });
+          }
+          
+          // Get messages to find the new user message for forking
+          await new Promise(resolve => setTimeout(resolve, 300)); // Give time for messages to be saved
+          const messages = await chatAPI.getMessages(currentChatId);
+          
+          // Find the NEW user message (C) that we just added
+          let newUserMessage = null;
+          for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i].role === 'user' && messages[i].content === content) {
+              newUserMessage = messages[i];
+              break;
+            }
+          }
+          
+          if (!newUserMessage) {
+            console.error("Failed to find new user message for branching");
+            return;
+          }
+          
+          console.log(`Forking from new user message: ${newUserMessage.content.substring(0, 50)}... - ID: ${newUserMessage.id}`);
+          
+          // Create all branches in parallel
+          const branchPromises = modelsNeedingBranches.map(async (model) => {
+            try {
+              const branchChat = await chatAPI.createFork(currentChatId, newUserMessage.id, {
+                provider: model.provider,
+                model: model.model,
+                send_message: false  // Don't re-send, just fork from this point
+              });
+              
+              // Update UI immediately
+              chats.update((chatList) => [branchChat, ...chatList]);
+              
+              // Start streaming immediately - the backend will handle the new user message
+              streamingChats.update((set) => new Set(set).add(branchChat.id));
+              // Use regenerate since the backend already added the user message
+              startBranchStreaming(branchChat.id, content);
+              
+              return branchChat;
+            } catch (error) {
+              console.error(`Failed to create branch for model ${model.model}:`, error);
+              return null;
+            }
+          });
+          
+          // Wait for all branches
+          const branches = await Promise.all(branchPromises);
+          
+          // Rebuild tree structure
+          const currentChats = get(chats);
+          buildChatTree(currentChats);
+          
+        } catch (err) {
+          console.error("Error in branch creation:", err);
+        }
+      })();
     }
 
-    // Start streaming for each branch, passing the temporary user message
-    branchChats.forEach((branchChat) => {
-      streamingChats.update((set) => new Set(set).add(branchChat.id));
-      startBranchStreaming(branchChat.id, content, userMessage);
-    });
-
-    return branchChats;
+    return chatsToStream;
   } catch (err) {
     console.error("Failed to send parallel message:", err);
     showError("Failed to send parallel message");
@@ -729,7 +792,7 @@ export async function sendParallelMessage(content, models, options = {}) {
 }
 
 // Start streaming for a branch chat
-async function startBranchStreaming(chatId, content, userMessage) {
+async function startBranchStreaming(chatId, content) {
   try {
     // The backend has already created the user message.
     // We just manage the assistant's streaming response.
@@ -748,7 +811,7 @@ async function startBranchStreaming(chatId, content, userMessage) {
     streamingMessages.update((messages) => ({
       ...messages,
       [chatId]: {
-        userMessage, // Store the passed-in user message
+        userMessage: null, // Branch already has user message from backend
         assistantMessage,
         assistantMessageId,
         content: "",
@@ -758,12 +821,13 @@ async function startBranchStreaming(chatId, content, userMessage) {
     // If this is the active chat, update the UI immediately
     const currentActive = get(activeChat);
     if (currentActive === chatId) {
-      addMessageToActiveChat(userMessage);
+      // Don't add userMessage here - the branch already has it from the backend
+      // Only add the assistant message placeholder
       addMessageToActiveChat(assistantMessage);
     }
 
-    const streamMethod = chatAPI.streamMessage;
-    await streamMethod(chatId, content, {
+    const streamMethod = chatAPI.regenerateResponse;
+    await streamMethod(chatId, {
       webSearch: false, // Parallel messages use individual model capabilities
       onChunk: (chunk, accumulatedContent) => {
         // Update the global streaming state
@@ -809,19 +873,12 @@ async function startBranchStreaming(chatId, content, userMessage) {
           );
         }
 
-        streamingChats.update((set) => {
-          const newSet = new Set(set);
-          newSet.delete(chatId);
-          return newSet;
-        });
+        // Clean up streaming state after completion
+        cleanupStreamingState(chatId);
 
-        // Clean up the streaming message after completion
+        // Clean up the streaming message after completion (with timeout for UI transition)
         setTimeout(() => {
-          streamingMessages.update((messages) => {
-            const updated = { ...messages };
-            delete updated[chatId];
-            return updated;
-          });
+          cleanupStreamingState(chatId);
         }, 1000);
       },
       onError: (error) => {
@@ -855,29 +912,18 @@ async function startBranchStreaming(chatId, content, userMessage) {
           );
         }
 
-        streamingChats.update((set) => {
-          const newSet = new Set(set);
-          newSet.delete(chatId);
-          return newSet;
-        });
+        // Clean up streaming state after error
+        cleanupStreamingState(chatId);
 
-        // Clean up the streaming message after error
+        // Clean up the streaming message after error (with timeout for UI transition)
         setTimeout(() => {
-          streamingMessages.update((messages) => {
-            const updated = { ...messages };
-            delete updated[chatId];
-            return updated;
-          });
+          cleanupStreamingState(chatId);
         }, 1000);
       },
     });
   } catch (err) {
     console.error(`Failed to start streaming for chat ${chatId}:`, err);
-    streamingChats.update((set) => {
-      const newSet = new Set(set);
-      newSet.delete(chatId);
-      return newSet;
-    });
+    cleanupStreamingState(chatId);
   }
 }
 
@@ -1075,17 +1121,7 @@ function setupGlobalStreamingHandlers() {
     }
     
     // Remove from streaming state
-    streamingChats.update((set) => {
-      const newSet = new Set(set);
-      newSet.delete(chatId);
-      return newSet;
-    });
-    
-    streamingMessages.update((messages) => {
-      const updated = { ...messages };
-      delete updated[chatId];
-      return updated;
-    });
+    cleanupStreamingState(chatId);
     
     // If this is the active chat and no content was provided, just mark as complete
     if (!content || content.length === 0) {
@@ -1105,17 +1141,7 @@ function setupGlobalStreamingHandlers() {
     console.error(`Stream error for chat ${chatId}: ${error}`);
     
     // Remove from streaming state
-    streamingChats.update((set) => {
-      const newSet = new Set(set);
-      newSet.delete(chatId);
-      return newSet;
-    });
-    
-    streamingMessages.update((messages) => {
-      const updated = { ...messages };
-      delete updated[chatId];
-      return updated;
-    });
+    cleanupStreamingState(chatId);
     
     // If this is the active chat, mark message as error
     const currentActiveChat = get(activeChat);

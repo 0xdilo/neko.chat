@@ -1,6 +1,108 @@
 import { api, endpoints, withErrorHandling } from "./client.js";
 import { websocket, WS_MESSAGE_TYPES } from "./websocket.js";
 
+// Helper function to extract error message from response
+async function extractErrorMessage(response) {
+  const errorText = await response.text();
+  let errorMessage = `HTTP ${response.status}`;
+
+  try {
+    const errorData = JSON.parse(errorText);
+    errorMessage = errorData.message || errorData.error || errorMessage;
+  } catch (e) {
+    if (errorText) errorMessage = errorText;
+  }
+
+  return errorMessage;
+}
+
+// Helper function to cleanup WebSocket event handlers
+function cleanupWebSocketHandlers(handlers) {
+  handlers.forEach(({ type, handler }) => {
+    websocket.off(type, handler);
+  });
+}
+
+// Helper function to create streaming handlers
+function createStreamingHandlers(chatId, abortController, accumulatedContentRef, options, resolve, reject, isCompletedRef, streamIdRef, messageIdRef) {
+  const handlers = {
+    update: (data) => {
+      if (data.chat_id === chatId && !abortController.signal.aborted) {
+        // Always use the full content from backend if available, as it's the authoritative source
+        if (data.content !== undefined && data.content !== null) {
+          accumulatedContentRef.value = data.content;
+        } else if (data.content_delta) {
+          // Only accumulate deltas if no full content is provided
+          accumulatedContentRef.value += data.content_delta;
+        }
+        
+        if (options.onChunk) {
+          // For backward compatibility, still send the delta and accumulated content
+          options.onChunk(data.content_delta || "", accumulatedContentRef.value);
+        }
+      }
+    },
+
+    start: (data) => {
+      if (data.chat_id === chatId) {
+        streamIdRef.value = data.stream_id;
+        messageIdRef.value = data.message_id;
+      }
+    },
+
+    resume: (data) => {
+      if (data.chat_id === chatId && !abortController.signal.aborted) {
+        // Resume from where we left off - use the full content from the backend
+        if (data.content !== undefined && data.content !== null) {
+          accumulatedContentRef.value = data.content;
+        }
+        
+        console.log(`Enhanced stream resume: ${accumulatedContentRef.value.length} characters for chat ${chatId}`);
+        
+        if (options.onChunk && accumulatedContentRef.value) {
+          // Call onChunk with the full accumulated content to restore the UI state
+          options.onChunk(accumulatedContentRef.value, accumulatedContentRef.value);
+        }
+      }
+    },
+
+    complete: (data) => {
+      if (data.chat_id === chatId && !isCompletedRef.value) {
+        isCompletedRef.value = true;
+        cleanupWebSocketHandlers(handlerList);
+        
+        if (options.onComplete) {
+          options.onComplete(accumulatedContentRef.value);
+        }
+        resolve(accumulatedContentRef.value);
+      }
+    },
+
+    error: (data) => {
+      if (data.chat_id === chatId && !isCompletedRef.value) {
+        isCompletedRef.value = true;
+        cleanupWebSocketHandlers(handlerList);
+        
+        const error = new Error(data.error || 'Streaming error occurred');
+        if (options.onError) {
+          options.onError(error);
+        }
+        reject(error);
+      }
+    }
+  };
+
+  const handlerList = [
+    { type: WS_MESSAGE_TYPES.STREAMING_UPDATE, handler: handlers.update },
+    { type: WS_MESSAGE_TYPES.STREAMING_START, handler: handlers.start },
+    { type: WS_MESSAGE_TYPES.STREAMING_RESUME, handler: handlers.resume },
+    { type: WS_MESSAGE_TYPES.STREAMING_COMPLETE, handler: handlers.complete },
+    { type: WS_MESSAGE_TYPES.STREAMING_ERROR, handler: handlers.error }
+  ];
+
+  return handlerList;
+}
+
 export const chatAPI = {
   async getChats(params = {}) {
     return withErrorHandling(
@@ -63,180 +165,6 @@ export const chatAPI = {
     );
   },
 
-  async streamMessage(chatId, message, options = {}) {
-    let reader = null;
-    let abortController = new AbortController();
-    let accumulatedContent = "";
-
-    if (options.onStart) {
-      options.onStart(abortController);
-    }
-
-    try {
-      const requestBody = {
-        content: message,
-      };
-
-      if (options.webSearch !== undefined) {
-        requestBody.web_search = options.webSearch;
-      }
-
-      const response = await fetch(`/api/chats/${chatId}/stream`, {
-        method: "POST",
-        headers: api.getHeaders(),
-        body: JSON.stringify(requestBody),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = `HTTP ${response.status}`;
-
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || errorData.error || errorMessage;
-        } catch (e) {
-          if (errorText) errorMessage = errorText;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Response body is not readable");
-      }
-
-      const decoder = new TextDecoder();
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            break;
-          }
-
-          const chunk = decoder.decode(value, { stream: true });
-
-          if (chunk.startsWith("ERROR:")) {
-            const errorMsg = chunk.substring(6).trim();
-            throw new Error(errorMsg || "Streaming error occurred");
-          }
-
-          accumulatedContent += chunk;
-
-          if (options.onChunk && chunk) {
-            options.onChunk(chunk, accumulatedContent);
-          }
-        }
-
-        if (options.onComplete) {
-          options.onComplete(accumulatedContent);
-        }
-
-        return accumulatedContent;
-      } finally {
-        if (reader) {
-          reader.releaseLock();
-        }
-      }
-    } catch (error) {
-      console.error("Streaming error:", error);
-
-      if (error.name === "AbortError") {
-        return accumulatedContent || "";
-      }
-
-      if (options.onError) {
-        options.onError(error);
-      }
-      throw error;
-    }
-  },
-
-  async regenerateResponse(chatId, options = {}) {
-    let reader = null;
-    let abortController = new AbortController();
-    let accumulatedContent = "";
-
-    if (options.onStart) {
-      options.onStart(abortController);
-    }
-
-    try {
-      const response = await fetch(`/api/chats/${chatId}/regenerate`, {
-        method: "POST",
-        headers: api.getHeaders(),
-        signal: abortController.signal,
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        let errorMessage = `HTTP ${response.status}`;
-
-        try {
-          const errorData = JSON.parse(errorText);
-          errorMessage = errorData.message || errorData.error || errorMessage;
-        } catch (e) {
-          if (errorText) errorMessage = errorText;
-        }
-
-        throw new Error(errorMessage);
-      }
-
-      reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("Response body is not readable");
-      }
-
-      const decoder = new TextDecoder();
-
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-
-          if (done) {
-            break;
-          }
-
-          const chunk = decoder.decode(value, { stream: true });
-
-          if (chunk.startsWith("ERROR:")) {
-            const errorMsg = chunk.substring(6).trim();
-            throw new Error(errorMsg || "Streaming error occurred");
-          }
-
-          accumulatedContent += chunk;
-
-          if (options.onChunk && chunk) {
-            options.onChunk(chunk, accumulatedContent);
-          }
-        }
-
-        if (options.onComplete) {
-          options.onComplete(accumulatedContent);
-        }
-
-        return accumulatedContent;
-      } finally {
-        if (reader) {
-          reader.releaseLock();
-        }
-      }
-    } catch (error) {
-      console.error("Regenerate streaming error:", error);
-
-      if (error.name === "AbortError") {
-        return accumulatedContent || "";
-      }
-
-      if (options.onError) {
-        options.onError(error);
-      }
-      throw error;
-    }
-  },
 
   async updateMessage(chatId, messageId, updates) {
     return withErrorHandling(
@@ -289,15 +217,15 @@ export const chatAPI = {
     );
   },
 
-  // WebSocket-based streaming methods
   async streamMessage(chatId, message, options = {}) {
     console.log("Starting stream for chat:", chatId);
 
     return new Promise((resolve, reject) => {
-      let accumulatedContent = "";
-      let streamId = null;
-      let messageId = null;
-      let isCompleted = false;
+      // Use object wrappers for mutable references
+      const accumulatedContentRef = { value: "" };
+      const streamIdRef = { value: null };
+      const messageIdRef = { value: null };
+      const isCompletedRef = { value: false };
 
       // Create abort controller for cancellation
       const abortController = new AbortController();
@@ -307,98 +235,27 @@ export const chatAPI = {
 
       // Handle abort signal
       abortController.signal.addEventListener('abort', () => {
-        if (streamId) {
+        if (streamIdRef.value) {
           // Cancel stream on backend
-          fetch(`/api/streaming/states/${streamId}/cancel`, {
+          fetch(`/api/streaming/states/${streamIdRef.value}/cancel`, {
             method: 'DELETE',
             headers: api.getHeaders(),
           }).catch(console.error);
         }
-        if (!isCompleted) {
-          resolve(accumulatedContent);
+        if (!isCompletedRef.value) {
+          resolve(accumulatedContentRef.value);
         }
       });
 
-      // Register WebSocket handlers for this streaming session
-      const handleStreamingUpdate = (data) => {
-        if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Always use the full content from backend if available, as it's the authoritative source
-          if (data.content !== undefined && data.content !== null) {
-            accumulatedContent = data.content;
-          } else if (data.content_delta) {
-            // Only accumulate deltas if no full content is provided
-            accumulatedContent += data.content_delta;
-          }
-          
-          if (options.onChunk) {
-            // For backward compatibility, still send the delta and accumulated content
-            options.onChunk(data.content_delta || "", accumulatedContent);
-          }
-        }
-      };
+      // Create and register WebSocket event handlers
+      const handlerList = createStreamingHandlers(
+        chatId, abortController, accumulatedContentRef, options, 
+        resolve, reject, isCompletedRef, streamIdRef, messageIdRef
+      );
 
-      const handleStreamingStart = (data) => {
-        if (data.chat_id === chatId) {
-          streamId = data.stream_id;
-          messageId = data.message_id;
-        }
-      };
-
-      const handleStreamingResume = (data) => {
-        if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Resume from where we left off - use the full content from the backend
-          if (data.content !== undefined && data.content !== null) {
-            accumulatedContent = data.content;
-          }
-          
-          console.log(`Enhanced stream resume: ${accumulatedContent.length} characters for chat ${chatId}`);
-          
-          if (options.onChunk && accumulatedContent) {
-            // Call onChunk with the full accumulated content to restore the UI state
-            options.onChunk(accumulatedContent, accumulatedContent);
-          }
-        }
-      };
-
-      const handleStreamingComplete = (data) => {
-        if (data.chat_id === chatId && !isCompleted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
-          
-          if (options.onComplete) {
-            options.onComplete(accumulatedContent);
-          }
-          resolve(accumulatedContent);
-        }
-      };
-
-      const handleStreamingError = (data) => {
-        if (data.chat_id === chatId && !isCompleted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
-          
-          const error = new Error(data.error || 'Streaming error occurred');
-          if (options.onError) {
-            options.onError(error);
-          }
-          reject(error);
-        }
-      };
-
-      // Register WebSocket event handlers
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
+      handlerList.forEach(({ type, handler }) => {
+        websocket.on(type, handler);
+      });
 
       // Initiate streaming via HTTP API
       const requestBody = {
@@ -424,21 +281,11 @@ export const chatAPI = {
       .then(async (response) => {
         console.log("Stream response status:", response.status);
         if (!response.ok) {
-          const errorText = await response.text();
           console.error("Stream request failed:", {
             status: response.status,
-            statusText: response.statusText,
-            errorText: errorText
+            statusText: response.statusText
           });
-          let errorMessage = `HTTP ${response.status}`;
-
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMessage = errorData.message || errorData.error || errorMessage;
-          } catch (e) {
-            if (errorText) errorMessage = errorText;
-          }
-
+          const errorMessage = await extractErrorMessage(response);
           throw new Error(errorMessage);
         } else {
           console.log("Stream request successful");
@@ -447,13 +294,9 @@ export const chatAPI = {
         // The actual streaming happens through WebSocket messages
       })
       .catch((error) => {
-        if (!isCompleted && !abortController.signal.aborted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
+        if (!isCompletedRef.value && !abortController.signal.aborted) {
+          isCompletedRef.value = true;
+          cleanupWebSocketHandlers(handlerList);
           
           if (options.onError) {
             options.onError(error);
@@ -468,10 +311,11 @@ export const chatAPI = {
     console.log("Starting regenerate for chat:", chatId);
 
     return new Promise((resolve, reject) => {
-      let accumulatedContent = "";
-      let streamId = null;
-      let messageId = null;
-      let isCompleted = false;
+      // Use object wrappers for mutable references
+      const accumulatedContentRef = { value: "" };
+      const streamIdRef = { value: null };
+      const messageIdRef = { value: null };
+      const isCompletedRef = { value: false };
 
       // Create abort controller for cancellation
       const abortController = new AbortController();
@@ -481,98 +325,27 @@ export const chatAPI = {
 
       // Handle abort signal
       abortController.signal.addEventListener('abort', () => {
-        if (streamId) {
+        if (streamIdRef.value) {
           // Cancel stream on backend
-          fetch(`/api/streaming/states/${streamId}/cancel`, {
+          fetch(`/api/streaming/states/${streamIdRef.value}/cancel`, {
             method: 'DELETE',
             headers: api.getHeaders(),
           }).catch(console.error);
         }
-        if (!isCompleted) {
-          resolve(accumulatedContent);
+        if (!isCompletedRef.value) {
+          resolve(accumulatedContentRef.value);
         }
       });
 
-      // Register WebSocket handlers for this streaming session
-      const handleStreamingUpdate = (data) => {
-        if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Always use the full content from backend if available, as it's the authoritative source
-          if (data.content !== undefined && data.content !== null) {
-            accumulatedContent = data.content;
-          } else if (data.content_delta) {
-            // Only accumulate deltas if no full content is provided
-            accumulatedContent += data.content_delta;
-          }
-          
-          if (options.onChunk) {
-            // For backward compatibility, still send the delta and accumulated content
-            options.onChunk(data.content_delta || "", accumulatedContent);
-          }
-        }
-      };
+      // Create and register WebSocket event handlers
+      const handlerList = createStreamingHandlers(
+        chatId, abortController, accumulatedContentRef, options, 
+        resolve, reject, isCompletedRef, streamIdRef, messageIdRef
+      );
 
-      const handleStreamingStart = (data) => {
-        if (data.chat_id === chatId) {
-          streamId = data.stream_id;
-          messageId = data.message_id;
-        }
-      };
-
-      const handleStreamingResume = (data) => {
-        if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Resume from where we left off - use the full content from the backend
-          if (data.content !== undefined && data.content !== null) {
-            accumulatedContent = data.content;
-          }
-          
-          console.log(`Enhanced stream resume: ${accumulatedContent.length} characters for chat ${chatId}`);
-          
-          if (options.onChunk && accumulatedContent) {
-            // Call onChunk with the full accumulated content to restore the UI state
-            options.onChunk(accumulatedContent, accumulatedContent);
-          }
-        }
-      };
-
-      const handleStreamingComplete = (data) => {
-        if (data.chat_id === chatId && !isCompleted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
-          
-          if (options.onComplete) {
-            options.onComplete(accumulatedContent);
-          }
-          resolve(accumulatedContent);
-        }
-      };
-
-      const handleStreamingError = (data) => {
-        if (data.chat_id === chatId && !isCompleted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
-          
-          const error = new Error(data.error || 'Streaming error occurred');
-          if (options.onError) {
-            options.onError(error);
-          }
-          reject(error);
-        }
-      };
-
-      // Register WebSocket event handlers
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-      websocket.on(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
+      handlerList.forEach(({ type, handler }) => {
+        websocket.on(type, handler);
+      });
 
       // Initiate regeneration via HTTP API
       fetch(`/api/v2/chats/${chatId}/regenerate`, {
@@ -582,29 +355,16 @@ export const chatAPI = {
       })
       .then(async (response) => {
         if (!response.ok) {
-          const errorText = await response.text();
-          let errorMessage = `HTTP ${response.status}`;
-
-          try {
-            const errorData = JSON.parse(errorText);
-            errorMessage = errorData.message || errorData.error || errorMessage;
-          } catch (e) {
-            if (errorText) errorMessage = errorText;
-          }
-
+          const errorMessage = await extractErrorMessage(response);
           throw new Error(errorMessage);
         }
         // For WebSocket streaming, we don't need to process the HTTP response body
         // The actual streaming happens through WebSocket messages
       })
       .catch((error) => {
-        if (!isCompleted && !abortController.signal.aborted) {
-          isCompleted = true;
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_UPDATE, handleStreamingUpdate);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_START, handleStreamingStart);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_RESUME, handleStreamingResume);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_COMPLETE, handleStreamingComplete);
-          websocket.off(WS_MESSAGE_TYPES.STREAMING_ERROR, handleStreamingError);
+        if (!isCompletedRef.value && !abortController.signal.aborted) {
+          isCompletedRef.value = true;
+          cleanupWebSocketHandlers(handlerList);
           
           if (options.onError) {
             options.onError(error);
