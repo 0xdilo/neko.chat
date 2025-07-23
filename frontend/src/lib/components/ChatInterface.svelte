@@ -37,7 +37,6 @@
 	import { showError, showSuccess } from "$lib/stores/app.js";
 	import { api } from "$lib/api/client.js";
 	import { chatAPI } from "$lib/api/chats.js";
-	import { USE_ENHANCED_STREAMING } from "$lib/api/websocket.js";
 	import { apiKeys } from "$lib/stores/settings.js";
 	import {
 		enabledModels,
@@ -93,8 +92,8 @@
 	$: userEnabledModels = $enabledModels;
 	$: modelsByProvider = $enabledModelsByProvider;
 	$: webSearchSupported = anySelectedModelSupportsWebSearch(currentSelectedModels, userEnabledModels);
-	
-	// Reset web search when switching to models that don't support it
+
+	// Auto-disable web search if no selected models support it
 	$: if (!webSearchSupported && webAccessEnabled) {
 		webAccessEnabled = false;
 	}
@@ -559,7 +558,7 @@ async function handleKeydown(e) {
 				addMessageToActiveChat(assistantMessage);
 
 				try {
-					const regenerateMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedRegenerateResponse : chatAPI.regenerateResponse;
+					const regenerateMethod = chatAPI.regenerateResponse;
 					await regenerateMethod($currentChat.id, {
 						onStart: (controller) => {
 							abortControllers.set($currentChat.id, controller);
@@ -650,7 +649,7 @@ async function handleKeydown(e) {
 
 			addMessageToActiveChat(assistantMessage);
 
-			const regenerateMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedRegenerateResponse : chatAPI.regenerateResponse;
+			const regenerateMethod = chatAPI.regenerateResponse;
 			await regenerateMethod($currentChat.id, {
 				onStart: (controller) => {
 					abortControllers.set($currentChat.id, controller);
@@ -754,7 +753,7 @@ async function handleKeydown(e) {
 			if (branchPointMessage.role === "user") {
 				try {
 					// Use the stream API to generate a response to the last message
-					const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+					const streamMethod = chatAPI.streamMessage;
 					await streamMethod(newChat.id, branchPointMessage.content, {
 						onStart: (controller) => {
 							// Handle streaming start

@@ -83,24 +83,6 @@ impl OpenAIClient {
         }
     }
 
-    fn separate_system_messages(&self, messages: Vec<Value>) -> (Option<String>, Vec<Value>) {
-        let mut system_prompt = None;
-        let mut user_messages = Vec::new();
-
-        for message in messages {
-            if let Some(role) = message.get("role").and_then(|r| r.as_str()) {
-                if role == "system" {
-                    if let Some(content) = message.get("content").and_then(|c| c.as_str()) {
-                        system_prompt = Some(content.to_string());
-                    }
-                } else {
-                    user_messages.push(message);
-                }
-            }
-        }
-
-        (system_prompt, user_messages)
-    }
 }
 
 

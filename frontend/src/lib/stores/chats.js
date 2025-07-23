@@ -2,7 +2,7 @@ import { writable, derived, get } from "svelte/store";
 import { browser } from "$app/environment";
 import { goto } from "$app/navigation";
 import { chatAPI } from "$lib/api/chats.js";
-import { USE_ENHANCED_STREAMING, websocket, WS_MESSAGE_TYPES } from "$lib/api/websocket.js";
+import { websocket, WS_MESSAGE_TYPES } from "$lib/api/websocket.js";
 import { showError, showSuccess } from "./app.js";
 import { rightSidebarCollapsed } from "./ui.js";
 import { getFirstEnabledModel, lastUsedModel } from "./models.js";
@@ -500,8 +500,8 @@ export async function sendMessage(content, options = {}) {
       return newSet;
     });
     
-    // Stream message response using enhanced streaming if enabled
-    const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+    // Stream message response using WebSocket streaming
+    const streamMethod = chatAPI.streamMessage;
     await streamMethod(currentChatId, content, {
       webSearch: options.webSearch,
       onStart: options.onStart,
@@ -762,7 +762,7 @@ async function startBranchStreaming(chatId, content, userMessage) {
       addMessageToActiveChat(assistantMessage);
     }
 
-    const streamMethod = USE_ENHANCED_STREAMING ? chatAPI.enhancedStreamMessage : chatAPI.streamMessage;
+    const streamMethod = chatAPI.streamMessage;
     await streamMethod(chatId, content, {
       webSearch: false, // Parallel messages use individual model capabilities
       onChunk: (chunk, accumulatedContent) => {
@@ -914,18 +914,26 @@ export function initializeChats() {
   streamingChats.set(new Set());
   streamingMessages.set({});
 
-  // Set up global streaming message handlers if enhanced streaming is enabled
-  if (USE_ENHANCED_STREAMING) {
-    setupGlobalStreamingHandlers();
-    
-    // Request stream resume for any active streams
-    setTimeout(() => {
+  // Set up global streaming message handlers when WebSocket is connected
+  setupGlobalStreamingHandlers();
+  
+  // Wait for WebSocket connection before requesting stream resume
+  const checkConnectionAndResume = () => {
+    const token = localStorage.getItem("neko-auth-token");
+    if (token && websocket && websocket.isConnected()) {
+      // Request stream resume for any active streams
       websocket.send({
         type: "RequestStreamResume",
         data: {}
       });
-    }, 200);
-  }
+    } else if (token) {
+      // If we have a token but no connection, wait a bit more
+      setTimeout(checkConnectionAndResume, 100);
+    }
+  };
+  
+  // Initial check after a small delay
+  setTimeout(checkConnectionAndResume, 200);
 }
 
 // Setup global handlers for streaming messages
@@ -1013,6 +1021,8 @@ function setupGlobalStreamingHandlers() {
       // Use the full content directly from the backend
       const fullContent = data.content || "";
       
+      console.log(`Updating UI for streaming message ${data.message_id}: ${fullContent.length} chars`);
+      
       // Update the message with the full content from backend
       activeChatMessages.update((messages) =>
         messages.map((msg) =>
@@ -1032,26 +1042,25 @@ function setupGlobalStreamingHandlers() {
     
     console.log(`Stream completed for chat ${chatId}, final content: ${content ? content.length : 0} chars`);
     
-    // If this is a completed stream being "resumed" (reconnect case), show the content first
-    if (content && content.length > 0) {
-      const currentActiveChat = get(activeChat);
-      if (currentActiveChat === chatId) {
-        console.log(`Displaying completed stream content: ${content.length} chars`);
-        
-        // Update the message in the active chat with final content
-        activeChatMessages.update((messages) => {
-          const existingIndex = messages.findIndex(m => m.id === messageId);
-          if (existingIndex >= 0) {
-            // Update existing message with final content
-            const updatedMessages = [...messages];
-            updatedMessages[existingIndex] = { 
-              ...updatedMessages[existingIndex], 
-              content, 
-              streaming: false 
-            };
-            return updatedMessages;
-          } else {
-            // Add new message with final content
+    const currentActiveChat = get(activeChat);
+    if (currentActiveChat === chatId) {
+      // Always update the message to mark streaming as complete
+      activeChatMessages.update((messages) => {
+        const existingIndex = messages.findIndex(m => m.id === messageId);
+        if (existingIndex >= 0) {
+          // Update existing message - use final content if provided, otherwise keep existing
+          const updatedMessages = [...messages];
+          const existingMessage = updatedMessages[existingIndex];
+          updatedMessages[existingIndex] = { 
+            ...existingMessage, 
+            content: content && content.length > 0 ? content : existingMessage.content,
+            streaming: false 
+          };
+          console.log(`Updated message ${messageId} with final content: ${updatedMessages[existingIndex].content.length} chars`);
+          return updatedMessages;
+        } else {
+          // Add new message with final content (for reconnect cases)
+          if (content && content.length > 0) {
             return [...messages, { 
               id: messageId, 
               role: "assistant", 
@@ -1060,8 +1069,9 @@ function setupGlobalStreamingHandlers() {
               created_at: new Date().toISOString() 
             }];
           }
-        });
-      }
+          return messages;
+        }
+      });
     }
     
     // Remove from streaming state

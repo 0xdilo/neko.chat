@@ -1,4 +1,4 @@
-use crate::{handlers::{chat_handler, llm_handler}, AppState};
+use crate::{handlers::chat_handler, AppState};
 use axum::{
     routing::{delete, get, patch, post},
     Router,
@@ -16,7 +16,7 @@ pub fn create_chat_routes() -> Router<AppState> {
         )
         .route(
             "/api/chats/:id/messages",
-            get(chat_handler::get_messages).post(llm_handler::send_message),
+            get(chat_handler::get_messages),
         )
         .route(
             "/api/chats/:chat_id/messages/:message_id",
@@ -33,10 +33,6 @@ pub fn create_chat_routes() -> Router<AppState> {
         .route(
             "/api/chats/:id/messages/bulk",
             post(chat_handler::bulk_insert_messages),
-        )
-        .route(
-            "/api/chats/:id/parallel",
-            post(llm_handler::parallel_llm_query),
         )
         .route(
             "/api/chats/:id/fork",

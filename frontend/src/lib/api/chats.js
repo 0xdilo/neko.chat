@@ -1,5 +1,5 @@
 import { api, endpoints, withErrorHandling } from "./client.js";
-import { websocket, WS_MESSAGE_TYPES, USE_ENHANCED_STREAMING } from "./websocket.js";
+import { websocket, WS_MESSAGE_TYPES } from "./websocket.js";
 
 export const chatAPI = {
   async getChats(params = {}) {
@@ -289,11 +289,9 @@ export const chatAPI = {
     );
   },
 
-  // Enhanced WebSocket-based streaming methods
-  async enhancedStreamMessage(chatId, message, options = {}) {
-    if (!USE_ENHANCED_STREAMING) {
-      return this.streamMessage(chatId, message, options);
-    }
+  // WebSocket-based streaming methods
+  async streamMessage(chatId, message, options = {}) {
+    console.log("Starting stream for chat:", chatId);
 
     return new Promise((resolve, reject) => {
       let accumulatedContent = "";
@@ -324,8 +322,13 @@ export const chatAPI = {
       // Register WebSocket handlers for this streaming session
       const handleStreamingUpdate = (data) => {
         if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Use full content from backend instead of accumulating deltas
-          accumulatedContent = data.content || accumulatedContent + (data.content_delta || "");
+          // Always use the full content from backend if available, as it's the authoritative source
+          if (data.content !== undefined && data.content !== null) {
+            accumulatedContent = data.content;
+          } else if (data.content_delta) {
+            // Only accumulate deltas if no full content is provided
+            accumulatedContent += data.content_delta;
+          }
           
           if (options.onChunk) {
             // For backward compatibility, still send the delta and accumulated content
@@ -343,8 +346,10 @@ export const chatAPI = {
 
       const handleStreamingResume = (data) => {
         if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Resume from where we left off
-          accumulatedContent = data.content || "";
+          // Resume from where we left off - use the full content from the backend
+          if (data.content !== undefined && data.content !== null) {
+            accumulatedContent = data.content;
+          }
           
           console.log(`Enhanced stream resume: ${accumulatedContent.length} characters for chat ${chatId}`);
           
@@ -404,6 +409,12 @@ export const chatAPI = {
         requestBody.web_search = options.webSearch;
       }
 
+      console.log("Initiating stream request:", {
+        chatId,
+        requestBody,
+        url: `/api/v2/chats/${chatId}/stream`
+      });
+
       fetch(`/api/v2/chats/${chatId}/stream`, {
         method: "POST",
         headers: api.getHeaders(),
@@ -411,8 +422,14 @@ export const chatAPI = {
         signal: abortController.signal,
       })
       .then(async (response) => {
+        console.log("Stream response status:", response.status);
         if (!response.ok) {
           const errorText = await response.text();
+          console.error("Stream request failed:", {
+            status: response.status,
+            statusText: response.statusText,
+            errorText: errorText
+          });
           let errorMessage = `HTTP ${response.status}`;
 
           try {
@@ -423,6 +440,8 @@ export const chatAPI = {
           }
 
           throw new Error(errorMessage);
+        } else {
+          console.log("Stream request successful");
         }
         // For WebSocket streaming, we don't need to process the HTTP response body
         // The actual streaming happens through WebSocket messages
@@ -445,10 +464,8 @@ export const chatAPI = {
     });
   },
 
-  async enhancedRegenerateResponse(chatId, options = {}) {
-    if (!USE_ENHANCED_STREAMING) {
-      return this.regenerateResponse(chatId, options);
-    }
+  async regenerateResponse(chatId, options = {}) {
+    console.log("Starting regenerate for chat:", chatId);
 
     return new Promise((resolve, reject) => {
       let accumulatedContent = "";
@@ -479,8 +496,13 @@ export const chatAPI = {
       // Register WebSocket handlers for this streaming session
       const handleStreamingUpdate = (data) => {
         if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Use full content from backend instead of accumulating deltas
-          accumulatedContent = data.content || accumulatedContent + (data.content_delta || "");
+          // Always use the full content from backend if available, as it's the authoritative source
+          if (data.content !== undefined && data.content !== null) {
+            accumulatedContent = data.content;
+          } else if (data.content_delta) {
+            // Only accumulate deltas if no full content is provided
+            accumulatedContent += data.content_delta;
+          }
           
           if (options.onChunk) {
             // For backward compatibility, still send the delta and accumulated content
@@ -498,8 +520,10 @@ export const chatAPI = {
 
       const handleStreamingResume = (data) => {
         if (data.chat_id === chatId && !abortController.signal.aborted) {
-          // Resume from where we left off
-          accumulatedContent = data.content || "";
+          // Resume from where we left off - use the full content from the backend
+          if (data.content !== undefined && data.content !== null) {
+            accumulatedContent = data.content;
+          }
           
           console.log(`Enhanced stream resume: ${accumulatedContent.length} characters for chat ${chatId}`);
           

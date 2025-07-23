@@ -2,6 +2,7 @@ import { writable } from "svelte/store";
 import { browser } from "$app/environment";
 import { authAPI } from "$lib/api/auth.js";
 import { resetChatsInitialized } from "./chats.js";
+import { websocket } from "$lib/api/websocket.js";
 
 export const isAuthenticated = writable(false);
 export const user = writable(null);
@@ -24,6 +25,11 @@ export async function login(email, password) {
       user.set(response.user);
       auth.set(response.user);
       isAuthenticated.set(true);
+      
+      // Connect WebSocket immediately after successful login
+      if (browser) {
+        websocket.connect();
+      }
 
       return { success: true, user: response.user };
     } else {

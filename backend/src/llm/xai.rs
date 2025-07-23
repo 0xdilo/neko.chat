@@ -1,5 +1,4 @@
 use crate::error::AppError;
-use async_stream::stream;
 use async_trait::async_trait;
 use futures_util::{Stream, StreamExt};
 use reqwest::Client;

@@ -482,6 +482,15 @@ impl StreamingManager {
                             self.broadcast_stream_update(update.clone()).await;
                             let _ = update_tx.send(update);
 
+                            // Send explicit completion message via WebSocket
+                            let completion_message = crate::ws_messages::WsMessage::new_streaming_complete(
+                                stream_id.clone(),
+                                initial_state.message_id.clone(),
+                                initial_state.chat_id.clone(),
+                                initial_state.user_id.clone(),
+                            );
+                            let _ = self.ws_broadcast_tx.send(completion_message);
+
                             // Final database update with all content
                             self.update_streaming_content(
                                 &stream_id, 

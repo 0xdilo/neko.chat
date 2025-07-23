@@ -5,8 +5,6 @@ export const wsConnected = writable(false);
 export const wsConnecting = writable(false);
 export const wsError = writable(null);
 
-// Feature flag for enhanced streaming (v2)
-export const USE_ENHANCED_STREAMING = true;
 
 export const WS_MESSAGE_TYPES = {
   // Chat messages
@@ -94,7 +92,7 @@ class WebSocketClient {
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     const host = window.location.host.replace(":5173", ":8080"); // Development
     const token = localStorage.getItem("neko-auth-token");
-    const endpoint = USE_ENHANCED_STREAMING ? "/ws/v2" : "/ws";
+    const endpoint = "/ws/v2";
 
     return `${protocol}//${host}${endpoint}${token ? `?token=${token}` : ""}`;
   }

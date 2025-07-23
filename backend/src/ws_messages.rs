@@ -212,13 +212,14 @@ impl WsMessage {
         }
     }
 
-    pub fn new_streaming_complete(stream_id: String, message_id: String, chat_id: String) -> Self {
+    pub fn new_streaming_complete(stream_id: String, message_id: String, chat_id: String, user_id: String) -> Self {
         WsMessage {
             message_type: WsMessageType::StreamingComplete,
             data: serde_json::json!({
                 "stream_id": stream_id,
                 "message_id": message_id,
                 "chat_id": chat_id,
+                "user_id": user_id,
             }),
         }
     }

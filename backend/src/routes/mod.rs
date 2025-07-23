@@ -5,8 +5,6 @@ pub mod auth;
 pub mod chat;
 pub mod key;
 pub mod settings;
-pub mod websocket;
-pub mod streaming;
 pub mod enhanced_streaming;
 
 pub fn create_router(app_state: AppState) -> Router {

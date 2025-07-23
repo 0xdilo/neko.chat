@@ -26,7 +26,6 @@ pub struct LoginPayload {
 #[derive(Deserialize)]
 pub struct GoogleCallbackQuery {
     code: String,
-    state: String,
 }
 
 #[derive(Deserialize)]
